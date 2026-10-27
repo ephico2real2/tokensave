@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::BranchAction;
+use crate::cli::{AccountingAction, BranchAction};
 use crate::global;
 use crate::Spinner;
 use tokensave::config::{discover_project, ProjectDiscovery};
@@ -1139,6 +1139,66 @@ pub async fn handle_gain(
             total.saved_tokens,
             total.calls,
             usd,
+        );
+    }
+    Ok(())
+}
+
+/// `tokensave accounting <action>`.
+pub(crate) async fn handle_accounting(action: AccountingAction) -> tokensave::errors::Result<()> {
+    match action {
+        AccountingAction::Backfill { dry_run } => handle_backfill(dry_run).await,
+    }
+}
+
+/// Fills the turn detail of earlier Claude Code turns and prints what it did.
+async fn handle_backfill(dry_run: bool) -> tokensave::errors::Result<()> {
+    use tokensave::accounting::backfill::{backfill_from_home, DETAIL_COLUMNS};
+    use tokensave::display::format_number;
+
+    let database_error = |message: String| tokensave::errors::TokenSaveError::Database {
+        message,
+        operation: "accounting backfill".to_string(),
+    };
+    let home = tokensave::agents::home_dir()
+        .ok_or_else(|| database_error("the home directory could not be determined".into()))?;
+    let gdb = tokensave::global_db::GlobalDb::open()
+        .await
+        .ok_or_else(|| database_error("the global database could not be opened".into()))?;
+    let report = backfill_from_home(&gdb, &home, dry_run)
+        .await
+        .map_err(|error| database_error(error.to_string()))?;
+
+    let mode = if report.dry_run {
+        " (dry run: nothing written)"
+    } else {
+        ""
+    };
+    println!("Turn detail backfill{mode}");
+    println!(
+        "  Transcripts read: {} ({} unreadable)",
+        format_number(report.files),
+        format_number(report.unreadable_files)
+    );
+    println!(
+        "  Claude Code turns: {}, of which {} still in a transcript",
+        format_number(report.turns),
+        format_number(report.turns_on_disk)
+    );
+    let verb = if report.dry_run {
+        "to update"
+    } else {
+        "updated"
+    };
+    println!("  Turns {verb}: {}", format_number(report.turns_updated));
+    for (column, filled) in DETAIL_COLUMNS.iter().zip(report.filled) {
+        println!("    {column:<16} {}", format_number(filled));
+    }
+    let gone = report.turns - report.turns_on_disk;
+    if gone > 0 {
+        println!(
+            "  {} turns have no transcript left; their detail stays unknown.",
+            format_number(gone)
         );
     }
     Ok(())

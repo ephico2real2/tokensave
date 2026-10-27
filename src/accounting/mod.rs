@@ -6,6 +6,7 @@
 //! settings, classifies each turn, and stores results in the global database
 //! for fast aggregate queries.
 
+pub mod backfill;
 pub mod classifier;
 pub mod discover;
 mod droid;

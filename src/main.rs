@@ -1845,6 +1845,9 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                 }
             }
         }
+        Commands::Accounting { action } => {
+            commands::handle_accounting(action).await?;
+        }
         Commands::Discover { since, json } => {
             commands::handle_discover(&since, json).await?;
         }

@@ -1057,6 +1057,27 @@ Discovery and analysis tools are read-only and safe to call in parallel. Session
 
 ---
 
+## Filling in earlier turns: `tokensave accounting backfill`
+
+Each Claude Code turn records who ran it and how: effort, the requested model,
+thinking tokens and time, speed, service tier, git branch, and the subagent run
+(`run_id`). Turns recorded before tokensave kept these hold none of them, and
+an ingest never reads their lines again. The backfill reads every transcript
+under `~/.claude/projects` from its start and fills them in.
+
+```bash
+tokensave accounting backfill --dry-run   # count what would be filled
+tokensave accounting backfill
+```
+
+It fills a column only where the turn has no value. It never adds a turn,
+moves a read offset, or changes a token count, cost, tool result, category or
+tool name, so a second run changes nothing. Turns whose transcript Claude Code
+has since removed keep an unknown detail; the report counts them. A
+`global.db` newer than the binary is not written to.
+
+---
+
 ## Finding missed opportunities: `tokensave discover`
 
 `tokensave discover` looks back over ingested Claude Code turns and reports

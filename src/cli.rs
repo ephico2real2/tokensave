@@ -380,6 +380,11 @@ pub enum Commands {
         #[arg(long)]
         export: Option<String>,
     },
+    /// Maintain the token accounting in the global database
+    Accounting {
+        #[command(subcommand)]
+        action: AccountingAction,
+    },
     /// Find navigation turns a tokensave query could have served more cheaply
     Discover {
         /// Time range: "today", "7d", "30d", "month", or "all"
@@ -578,6 +583,23 @@ mod tests {
             err_kind
         );
     }
+}
+
+#[derive(Subcommand)]
+pub enum AccountingAction {
+    /// Fill the turn detail of Claude Code turns recorded before it was kept
+    ///
+    /// Reads every Claude Code transcript under ~/.claude/projects from its
+    /// start and fills effort, requested model, thinking tokens and time,
+    /// speed, service tier, git branch and run id where a recorded turn has
+    /// none. Never replaces a value, adds a turn, or changes a token count,
+    /// cost, tool result, category or tool name; a second run changes
+    /// nothing. Turns whose transcript is gone keep an unknown detail.
+    Backfill {
+        /// Count what would be filled, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]

@@ -80,7 +80,7 @@ fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) -> bool {
 /// Extract project hash and session ID from a JSONL file path.
 /// Path pattern: `~/.claude/projects/<project-hash>/<session-id>.jsonl`
 /// or `~/.claude/projects/<project-hash>/<session-id>/subagents/<agent>.jsonl`
-fn extract_path_parts(path: &Path) -> (String, String) {
+pub(crate) fn extract_path_parts(path: &Path) -> (String, String) {
     let components: Vec<&str> = path
         .components()
         .filter_map(|c| c.as_os_str().to_str())
@@ -104,7 +104,7 @@ fn extract_path_parts(path: &Path) -> (String, String) {
 
 /// Parse a single JSONL line into a [`ClaudeLine`], if it's an assistant
 /// message with usage data.
-fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<ClaudeLine> {
+pub(crate) fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<ClaudeLine> {
     let v: Value = serde_json::from_str(line).ok()?;
 
     // Only process assistant messages
@@ -461,7 +461,7 @@ impl IngestStats {
 /// Shared by the Claude Stop hook (via [`ingest_claude_only`]) and the full
 /// coordinated ingest (via [`ingest_from_home`]).  Keeping this as a private
 /// helper avoids duplicating the offset-tracking loop.
-async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
+pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
     if gdb.newer_schema().is_some() {
         return IngestStats::empty();
     }

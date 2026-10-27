@@ -43,6 +43,11 @@ pub struct AgentCostSummary {
 
 mod migrations;
 
+/// Rows written per transaction by [`GlobalDb::fill_turn_details`]: one
+/// transaction per row would sync once per row, and one for every row would
+/// hold the write lock against the hooks for the whole run.
+const FILL_BATCH_ROWS: usize = 500;
+
 /// The schema version of `global.db` this binary writes: its `PRAGMA
 /// user_version` once opened (inkcast #248).
 pub const SCHEMA_VERSION: u32 = migrations::LATEST;
@@ -813,6 +818,114 @@ impl GlobalDb {
             git_branch: row.get(6).ok(),
             run_id: row.get(7).ok(),
         })
+    }
+
+    /// The [`crate::types::TurnDetail`] of every Claude Code turn, by message
+    /// id, or `None` when the turns cannot be read.
+    pub async fn claude_turn_details(
+        &self,
+    ) -> Option<std::collections::HashMap<String, crate::types::TurnDetail>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT message_id, effort, requested_model, thinking_tokens, thinking_ms,
+                        speed, service_tier, git_branch, run_id
+                 FROM turns WHERE agent = 'claude'",
+                (),
+            )
+            .await
+            .ok()?;
+        let mut details = std::collections::HashMap::new();
+        while let Some(row) = rows.next().await.ok()? {
+            let count = |index| {
+                row.get::<i64>(index)
+                    .ok()
+                    .and_then(|value| u64::try_from(value).ok())
+            };
+            let detail = crate::types::TurnDetail {
+                effort: row.get(1).ok(),
+                requested_model: row.get(2).ok(),
+                thinking_tokens: count(3),
+                thinking_ms: count(4),
+                speed: row.get(5).ok(),
+                service_tier: row.get(6).ok(),
+                git_branch: row.get(7).ok(),
+                run_id: row.get(8).ok(),
+            };
+            details.insert(row.get::<String>(0).ok()?, detail);
+        }
+        Some(details)
+    }
+
+    /// Fills the `NULL` detail columns of recorded turns from `details`,
+    /// never replacing a stored value, in transactions of
+    /// [`FILL_BATCH_ROWS`] rows. Returns the rows changed, or `None` when a
+    /// write failed; the batches committed before it stay.
+    pub async fn fill_turn_details(
+        &self,
+        details: &[(String, crate::types::TurnDetail)],
+    ) -> Option<u64> {
+        let mut changed = 0;
+        for batch in details.chunks(FILL_BATCH_ROWS) {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .await
+                .ok()?;
+            let mut written = Some(0);
+            for (message_id, detail) in batch {
+                let count = |value: Option<u64>| value.and_then(|v| i64::try_from(v).ok());
+                // The WHERE names the columns this fills, so a row whose
+                // NULLs have no value to take is not counted as changed.
+                let Ok(rows) = tx
+                    .execute(
+                        "UPDATE turns SET
+                             effort = COALESCE(effort, ?2),
+                             requested_model = COALESCE(requested_model, ?3),
+                             thinking_tokens = COALESCE(thinking_tokens, ?4),
+                             thinking_ms = COALESCE(thinking_ms, ?5),
+                             speed = COALESCE(speed, ?6),
+                             service_tier = COALESCE(service_tier, ?7),
+                             git_branch = COALESCE(git_branch, ?8),
+                             run_id = COALESCE(run_id, ?9)
+                         WHERE message_id = ?1
+                           AND ((effort IS NULL AND ?2 IS NOT NULL)
+                             OR (requested_model IS NULL AND ?3 IS NOT NULL)
+                             OR (thinking_tokens IS NULL AND ?4 IS NOT NULL)
+                             OR (thinking_ms IS NULL AND ?5 IS NOT NULL)
+                             OR (speed IS NULL AND ?6 IS NOT NULL)
+                             OR (service_tier IS NULL AND ?7 IS NOT NULL)
+                             OR (git_branch IS NULL AND ?8 IS NOT NULL)
+                             OR (run_id IS NULL AND ?9 IS NOT NULL))",
+                        params![
+                            message_id.as_str(),
+                            detail.effort.clone(),
+                            detail.requested_model.clone(),
+                            count(detail.thinking_tokens),
+                            count(detail.thinking_ms),
+                            detail.speed.clone(),
+                            detail.service_tier.clone(),
+                            detail.git_branch.clone(),
+                            detail.run_id.clone()
+                        ],
+                    )
+                    .await
+                else {
+                    written = None;
+                    break;
+                };
+                written = written.map(|n| n + rows);
+            }
+            let Some(rows) = written else {
+                // Rolled back here so the outcome is not left to `Drop`; if
+                // the ROLLBACK itself fails, libsql's `Drop` panics either way.
+                let _ = tx.rollback().await;
+                return None;
+            };
+            tx.commit().await.ok()?;
+            changed += rows;
+        }
+        Some(changed)
     }
 
     /// Records a subagent run, replacing the stored row: its `.meta.json` is
