@@ -7,7 +7,10 @@
 
 use std::path::{Path, PathBuf};
 
-use libsql::{params, Builder, Connection, Database as LibsqlDatabase};
+use libsql::{params, Builder, Connection, Database as LibsqlDatabase, TransactionBehavior};
+
+use crate::accounting::classifier::BashSignals;
+use crate::accounting::turn_merge::{merge_line, ClaudeLine, TurnState};
 
 /// Total savings + call count for a project (or all projects when `project` is None).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -61,6 +64,21 @@ const TURN_DETAIL_COLUMNS: [(&str, &str); 8] = [
     ),
     ("git_branch", "ALTER TABLE turns ADD COLUMN git_branch TEXT"),
     ("run_id", "ALTER TABLE turns ADD COLUMN run_id TEXT"),
+];
+
+/// The `turns` columns a later transcript line of a Claude Code message is
+/// merged against ([`crate::accounting::turn_merge`]), with the statement that
+/// adds each to a database created before them. `NULL` marks a turn recorded
+/// before them, whose calls are unknown.
+const TURN_MERGE_COLUMNS: [(&str, &str); 2] = [
+    (
+        "tool_use_ids",
+        "ALTER TABLE turns ADD COLUMN tool_use_ids TEXT",
+    ),
+    (
+        "bash_signals",
+        "ALTER TABLE turns ADD COLUMN bash_signals INTEGER",
+    ),
 ];
 
 /// User-level database tracking all `TokenSave` projects.
@@ -281,7 +299,9 @@ impl GlobalDb {
                 speed TEXT,
                 service_tier TEXT,
                 git_branch TEXT,
-                run_id TEXT
+                run_id TEXT,
+                tool_use_ids TEXT,
+                bash_signals INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
             CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
@@ -348,9 +368,10 @@ impl GlobalDb {
         Self::open_at(&db_path).await
     }
 
-    /// Add `agent`, `credits`, `tool_result_tokens` and the
-    /// [`TURN_DETAIL_COLUMNS`] to an existing turns table if absent. Returns
-    /// whether every one of them is there afterwards.
+    /// Add `agent`, `credits`, `tool_result_tokens`, the
+    /// [`TURN_DETAIL_COLUMNS`] and the [`TURN_MERGE_COLUMNS`] to an existing
+    /// turns table if absent. Returns whether every one of them is there
+    /// afterwards.
     async fn migrate_turns_columns(conn: &Connection) -> bool {
         let Some(present) = Self::turns_columns(conn).await else {
             return false;
@@ -381,9 +402,10 @@ impl GlobalDb {
                 )
                 .await;
         }
-        // Turn detail (who ran the turn and how). Left NULL on rows parsed
-        // before, for the reason given for `tool_result_tokens` above.
-        for (column, ddl) in TURN_DETAIL_COLUMNS {
+        // Turn detail (who ran the turn and how), and what a later line of a
+        // message is merged against. Left NULL on rows parsed before, for the
+        // reason given for `tool_result_tokens` above.
+        for (column, ddl) in TURN_DETAIL_COLUMNS.into_iter().chain(TURN_MERGE_COLUMNS) {
             if !has(column) {
                 let _ = conn.execute(ddl, ()).await;
             }
@@ -403,6 +425,7 @@ impl GlobalDb {
             ["agent", "credits", "tool_result_tokens"]
                 .into_iter()
                 .chain(TURN_DETAIL_COLUMNS.map(|(column, _)| column))
+                .chain(TURN_MERGE_COLUMNS.map(|(column, _)| column))
                 .all(|column| now.iter().any(|name| name.eq_ignore_ascii_case(column)))
         })
     }
@@ -692,6 +715,28 @@ impl GlobalDb {
 
     /// Insert a parsed turn. Returns `true` if inserted, `false` if duplicate.
     pub async fn insert_turn(&self, turn: &crate::types::CostTurn) -> bool {
+        self.insert_turn_row(turn, None, None).await
+    }
+
+    /// Insert the turn of a Claude Code message from the first of its lines
+    /// read, with the calls and Bash signals a later line is merged against
+    /// ([`Self::merge_claude_line`]). Returns `true` if inserted, `false` if
+    /// the message is already recorded.
+    pub async fn insert_claude_turn(&self, line: &ClaudeLine) -> bool {
+        self.insert_turn_row(
+            &line.turn,
+            Some(line.call_ids()),
+            Some(i64::from(line.bash.bits())),
+        )
+        .await
+    }
+
+    async fn insert_turn_row(
+        &self,
+        turn: &crate::types::CostTurn,
+        tool_use_ids: Option<String>,
+        bash_signals: Option<i64>,
+    ) -> bool {
         self.conn
             .execute(
                 "INSERT OR IGNORE INTO turns
@@ -699,9 +744,10 @@ impl GlobalDb {
                   input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
                   cost_usd, category, tool_names, agent, credits,
                   effort, requested_model, thinking_tokens, thinking_ms,
-                  speed, service_tier, git_branch, run_id)
+                  speed, service_tier, git_branch, run_id,
+                  tool_use_ids, bash_signals)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
                 params![
                     turn.message_id.clone(),
                     turn.project_hash.clone(),
@@ -725,42 +771,124 @@ impl GlobalDb {
                     turn.detail.service_tier.clone(),
                     turn.detail.git_branch.clone(),
                     turn.detail.run_id.clone(),
+                    tool_use_ids,
+                    bash_signals,
                 ],
             )
             .await
             .is_ok_and(|n| n > 0)
     }
 
-    /// Fills the usage fields a recorded turn lacks from a later line of the
-    /// same message. Claude Code writes a subagent message's first line while
-    /// it streams, before its `speed` and thinking tokens are known, and the
-    /// finished line after it (2,826 of 41,999 subagent messages, 2026-10-27).
-    /// Never overwrites a value; tokens and cost stay as the first line set
-    /// them. Writes nothing unless a column is filled.
-    pub async fn fill_turn_usage(
-        &self,
-        message_id: &str,
-        detail: &crate::types::TurnDetail,
-    ) -> bool {
-        self.conn
-            .execute(
-                "UPDATE turns SET
-                     thinking_tokens = COALESCE(thinking_tokens, ?2),
-                     speed           = COALESCE(speed, ?3),
-                     service_tier    = COALESCE(service_tier, ?4)
-                 WHERE message_id = ?1
-                   AND ((thinking_tokens IS NULL AND ?2 IS NOT NULL)
-                     OR (speed IS NULL AND ?3 IS NOT NULL)
-                     OR (service_tier IS NULL AND ?4 IS NOT NULL))",
-                params![
-                    message_id.to_string(),
-                    detail.thinking_tokens.map(|t| t as i64),
-                    detail.speed.clone(),
-                    detail.service_tier.clone(),
-                ],
+    /// Merges a later line of a recorded Claude Code message into its turn,
+    /// as [`merge_line`] describes. Returns `true` when the row changed.
+    ///
+    /// The row is read first without a lock, since most later lines add
+    /// nothing. When one does, it is read again and written in one
+    /// `BEGIN IMMEDIATE` transaction: ingests run in several processes at once
+    /// (the Stop hook, `tokensave cost`, the monitor), and two merging
+    /// different lines of a message from the same read would lose one. Every
+    /// ingest caller opens its own `GlobalDb`, so no other statement runs on
+    /// this connection inside the transaction.
+    pub async fn merge_claude_line(&self, line: &ClaudeLine) -> bool {
+        let message_id = line.turn.message_id.as_str();
+        let adds = Self::turn_state(&self.conn, message_id)
+            .await
+            .and_then(|stored| merge_line(&stored, line))
+            .is_some();
+        if !adds {
+            return false;
+        }
+        let Ok(tx) = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+        else {
+            return false;
+        };
+        let merged = Self::turn_state(&tx, message_id)
+            .await
+            .and_then(|stored| merge_line(&stored, line));
+        let written = match merged {
+            Some(next) => Self::write_turn_state(&tx, message_id, &next).await,
+            None => false,
+        };
+        if written {
+            tx.commit().await.is_ok()
+        } else {
+            // Dropping an open transaction also rolls back, but panics when
+            // that rollback fails.
+            let _ = tx.rollback().await;
+            false
+        }
+    }
+
+    /// The [`TurnState`] of a recorded turn, or `None` for an unknown
+    /// `message_id` or a row that cannot be read.
+    async fn turn_state(conn: &Connection, message_id: &str) -> Option<TurnState> {
+        let mut rows = conn
+            .query(
+                "SELECT model, input_tokens, output_tokens, cache_write_tokens,
+                        cache_read_tokens, cost_usd, category, tool_names,
+                        tool_use_ids, bash_signals, thinking_tokens, speed, service_tier
+                 FROM turns WHERE message_id = ?1",
+                params![message_id.to_string()],
             )
             .await
-            .is_ok_and(|n| n > 0)
+            .ok()?;
+        let row = rows.next().await.ok()??;
+        let count = |index| {
+            row.get::<i64>(index)
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+        };
+        Some(TurnState {
+            model: row.get(0).ok()?,
+            input_tokens: count(1)?,
+            output_tokens: count(2)?,
+            cache_write_tokens: count(3)?,
+            cache_read_tokens: count(4)?,
+            cost_usd: row.get(5).ok()?,
+            category: row.get(6).ok()?,
+            tool_names: row.get(7).ok()?,
+            tool_use_ids: row.get(8).ok(),
+            bash_signals: row
+                .get::<i64>(9)
+                .ok()
+                .and_then(|bits| u8::try_from(bits).ok())
+                .map(BashSignals::from_bits),
+            thinking_tokens: count(10),
+            speed: row.get(11).ok(),
+            service_tier: row.get(12).ok(),
+        })
+    }
+
+    async fn write_turn_state(conn: &Connection, message_id: &str, state: &TurnState) -> bool {
+        conn.execute(
+            "UPDATE turns SET
+                 input_tokens = ?2, output_tokens = ?3,
+                 cache_write_tokens = ?4, cache_read_tokens = ?5,
+                 cost_usd = ?6, category = ?7, tool_names = ?8,
+                 tool_use_ids = ?9, bash_signals = ?10,
+                 thinking_tokens = ?11, speed = ?12, service_tier = ?13
+             WHERE message_id = ?1",
+            params![
+                message_id.to_string(),
+                state.input_tokens as i64,
+                state.output_tokens as i64,
+                state.cache_write_tokens as i64,
+                state.cache_read_tokens as i64,
+                state.cost_usd,
+                state.category.clone(),
+                state.tool_names.clone(),
+                state.tool_use_ids.clone(),
+                state.bash_signals.map(|bash| i64::from(bash.bits())),
+                state.thinking_tokens.map(|t| t as i64),
+                state.speed.clone(),
+                state.service_tier.clone(),
+            ],
+        )
+        .await
+        .is_ok_and(|n| n > 0)
     }
 
     /// The recorded [`crate::types::TurnDetail`] of a turn, or `None` for an

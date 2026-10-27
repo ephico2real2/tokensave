@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::accounting::classifier;
+use crate::accounting::classifier::{self, BashSignals};
 use crate::accounting::pricing;
+use crate::accounting::turn_merge::{ClaudeLine, ToolCall};
 use crate::context::read_modes::estimate_tokens;
 use crate::global_db::GlobalDb;
 use crate::types::{AgentRun, CostTurn, TurnDetail};
@@ -101,9 +102,9 @@ fn extract_path_parts(path: &Path) -> (String, String) {
     (project_hash, session_id)
 }
 
-/// Parse a single JSONL line into a `CostTurn`, if it's an assistant message
-/// with usage data.
-fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<(CostTurn, Vec<String>)> {
+/// Parse a single JSONL line into a [`ClaudeLine`], if it's an assistant
+/// message with usage data.
+fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<ClaudeLine> {
     let v: Value = serde_json::from_str(line).ok()?;
 
     // Only process assistant messages
@@ -135,15 +136,23 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<(CostT
     let mut tool_names_vec: Vec<String> = Vec::new();
     let mut bash_commands: Vec<String> = Vec::new();
     let mut tool_use_ids: Vec<String> = Vec::new();
+    let mut calls: Vec<ToolCall> = Vec::new();
 
     if let Some(blocks) = content {
         for block in blocks {
             if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                if let Some(id) = block.get("id").and_then(|i| i.as_str()) {
+                let id = block.get("id").and_then(|i| i.as_str());
+                if let Some(id) = id {
                     tool_use_ids.push(id.to_string());
                 }
                 if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
                     tool_names_vec.push(name.to_string());
+                    if let Some(id) = id {
+                        calls.push(ToolCall {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                        });
+                    }
                     if name == "Bash" {
                         if let Some(cmd) = block
                             .get("input")
@@ -167,7 +176,8 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<(CostT
         .iter()
         .map(std::string::String::as_str)
         .collect();
-    let category = classifier::classify(&tool_refs, &bash_refs);
+    let bash = BashSignals::of(&bash_refs);
+    let category = classifier::classify_with(&tool_refs, bash);
 
     // Compute cost
     let cost_usd = pricing::cost_of_turn(
@@ -195,7 +205,12 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<(CostT
         credits: None,
         detail: turn_detail(&v, usage),
     };
-    Some((turn, tool_use_ids))
+    Some(ClaudeLine {
+        turn,
+        calls,
+        bash,
+        tool_use_ids,
+    })
 }
 
 /// The [`TurnDetail`] of one assistant line: the outer object `v` and its
@@ -525,24 +540,22 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    if let Some((turn, tool_use_ids)) =
-                        parse_line(trimmed, &project_hash, &session_id)
-                    {
-                        let turn_cost = turn.cost_usd;
-                        let turn_tokens = turn.input_tokens + turn.output_tokens;
+                    if let Some(line) = parse_line(trimmed, &project_hash, &session_id) {
+                        let turn = &line.turn;
                         // Remember which turn issued each tool call, so the
                         // result blocks in a later user message can be sized
                         // and added back to it (#474).
-                        for id in tool_use_ids {
-                            issuing_turn.insert(id, turn.message_id.clone());
+                        for id in &line.tool_use_ids {
+                            issuing_turn.insert(id.clone(), turn.message_id.clone());
                         }
-                        if gdb.insert_turn(&turn).await {
+                        if gdb.insert_claude_turn(&line).await {
                             total_inserted += 1;
-                            total_cost += turn_cost;
-                            total_tokens += turn_tokens;
+                            total_cost += turn.cost_usd;
+                            total_tokens += turn.input_tokens + turn.output_tokens;
                         } else {
-                            // A later line of a message already recorded.
-                            gdb.fill_turn_usage(&turn.message_id, &turn.detail).await;
+                            // A later line of a message already recorded:
+                            // its calls and final usage join the turn (#250).
+                            gdb.merge_claude_line(&line).await;
                         }
                     } else {
                         for (tool_use_id, tokens) in parse_tool_results(trimmed) {
@@ -755,7 +768,7 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"id":"msg_01abc","model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":500,"cache_read_input_tokens":800},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"test.rs"}}]},"timestamp":"2026-04-14T10:00:00.000Z"}"#;
         let turn = parse_line(line, "proj", "sess");
         assert!(turn.is_some());
-        let (t, _tool_use_ids) = turn.unwrap();
+        let t = turn.unwrap().turn;
         assert_eq!(t.message_id, "msg_01abc");
         assert_eq!(t.model, "claude-opus-4-6");
         assert_eq!(t.input_tokens, 1000);
@@ -784,9 +797,10 @@ mod tests {
     #[test]
     fn assistant_turn_reports_the_tool_calls_it_issued() {
         let line = r#"{"type":"assistant","message":{"id":"msg_01abc","model":"claude-opus-4-6","role":"assistant","usage":{"input_tokens":3,"output_tokens":200},"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}},{"type":"tool_use","id":"toolu_2","name":"Grep","input":{}}]},"timestamp":"2026-04-14T10:00:00.000Z"}"#;
-        let (turn, ids) = parse_line(line, "proj", "sess").unwrap();
-        assert_eq!(turn.tool_names, "Read,Grep");
-        assert_eq!(ids, ["toolu_1", "toolu_2"]);
+        let line = parse_line(line, "proj", "sess").unwrap();
+        assert_eq!(line.turn.tool_names, "Read,Grep");
+        assert_eq!(line.tool_use_ids, ["toolu_1", "toolu_2"]);
+        assert_eq!(line.call_ids(), "toolu_1,toolu_2");
     }
 
     /// A result block is sized by its text, whether the content is a plain
@@ -827,7 +841,7 @@ mod tests {
 
     #[test]
     fn a_main_session_turn_records_who_ran_it_and_how() {
-        let (turn, _) = parse_line(MAIN_LINE, "proj", "sess-1").unwrap();
+        let turn = parse_line(MAIN_LINE, "proj", "sess-1").unwrap().turn;
         assert_eq!(
             turn.detail,
             TurnDetail {
@@ -847,7 +861,9 @@ mod tests {
     /// no speed, not the string "null".
     #[test]
     fn a_subagent_turn_carries_its_run_and_falls_back_to_effort() {
-        let (turn, _) = parse_line(SUBAGENT_LINE, "proj", "agent-a1b2c3").unwrap();
+        let turn = parse_line(SUBAGENT_LINE, "proj", "agent-a1b2c3")
+            .unwrap()
+            .turn;
         assert_eq!(turn.detail.run_id.as_deref(), Some("a1b2c3"));
         assert_eq!(turn.detail.effort.as_deref(), Some("xhigh"));
         assert_eq!(turn.detail.speed, None);
@@ -858,7 +874,7 @@ mod tests {
     #[test]
     fn a_line_without_the_fields_leaves_them_unknown() {
         let line = r#"{"type":"assistant","message":{"id":"msg_old","model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":2}},"timestamp":"2026-04-14T10:00:00.000Z"}"#;
-        let (turn, _) = parse_line(line, "proj", "sess").unwrap();
+        let turn = parse_line(line, "proj", "sess").unwrap().turn;
         assert_eq!(turn.detail, TurnDetail::default());
     }
 
@@ -1051,7 +1067,8 @@ mod tests {
 
     /// A subagent message's first line is written while it streams, without
     /// `speed` or thinking tokens; its last line has them. The turn keeps
-    /// them, and its tokens and cost stay those of the first line.
+    /// them, with the last line's output tokens (#250). The ingest stats
+    /// still count the turn as its first line inserted it.
     #[tokio::test]
     async fn a_later_line_of_a_message_fills_its_usage_detail() {
         let streaming = r#"{"type":"assistant","sessionId":"sess-1","agentId":"a1b2c3","message":{"id":"msg_s","model":"claude-opus-5-5","usage":{"input_tokens":2,"output_tokens":16,"service_tier":"standard"},"content":[]},"timestamp":"2026-10-27T04:00:00.000Z"}"#;
@@ -1072,5 +1089,220 @@ mod tests {
         assert_eq!(detail.speed.as_deref(), Some("standard"));
         assert_eq!(detail.thinking_tokens, Some(648));
         assert_eq!(detail.run_id.as_deref(), Some("a1b2c3"));
+        assert_eq!(stored_turn(&db_tmp, "msg_s").await.output_tokens, 559);
+    }
+
+    /// One assistant line of message `id`, holding the content block `block`.
+    fn assistant_line(id: &str, output_tokens: u64, stop: &str, block: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"id":"{id}","model":"claude-opus-4-6","stop_reason":{stop},"usage":{{"input_tokens":3,"output_tokens":{output_tokens},"cache_read_input_tokens":20}},"content":[{block}]}},"timestamp":"2026-10-27T04:00:00.000Z"}}"#
+        )
+    }
+
+    const THINKING: &str = r#"{"type":"thinking","thinking":""}"#;
+    const TEXT: &str = r#"{"type":"text","text":"x"}"#;
+
+    fn tool_use(id: &str, name: &str, command: &str) -> String {
+        format!(
+            r#"{{"type":"tool_use","id":"{id}","name":"{name}","input":{{"command":"{command}"}}}}"#
+        )
+    }
+
+    /// A main-session transcript holding `lines`; returns the home directory
+    /// and the transcript's path.
+    fn session_home(lines: &[String]) -> (TempDir, PathBuf) {
+        let home = TempDir::new().unwrap();
+        let project = home.path().join(".claude").join("projects").join("-proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let transcript = project.join("sess-1.jsonl");
+        std::fs::write(&transcript, lines.join("\n") + "\n").unwrap();
+        (home, transcript)
+    }
+
+    /// The columns of a recorded turn that its later lines change, read
+    /// through a second connection to the test database.
+    async fn stored_turn(db_tmp: &TempDir, message_id: &str) -> StoredTurn {
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let db = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
+                        bash_signals, tool_result_tokens
+                 FROM turns WHERE message_id = ?1",
+                libsql::params![message_id.to_string()],
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        StoredTurn {
+            tool_names: row.get(0).unwrap(),
+            category: row.get(1).unwrap(),
+            output_tokens: row.get(2).unwrap(),
+            cost_usd: row.get(3).unwrap(),
+            tool_use_ids: row.get(4).ok(),
+            bash_signals: row.get(5).ok(),
+            tool_result_tokens: row.get(6).unwrap(),
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct StoredTurn {
+        tool_names: String,
+        category: String,
+        output_tokens: i64,
+        cost_usd: f64,
+        tool_use_ids: Option<String>,
+        bash_signals: Option<i64>,
+        tool_result_tokens: i64,
+    }
+
+    /// Claude Code writes a message one block per line; a tool call on its
+    /// third line is the turn's (#250).
+    #[tokio::test]
+    async fn a_tool_call_after_the_first_line_is_the_turns() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[
+            assistant_line("msg_m", 8, "null", THINKING),
+            assistant_line("msg_m", 8, "null", TEXT),
+            assistant_line(
+                "msg_m",
+                8,
+                r#""tool_use""#,
+                &tool_use("toolu_e", "Edit", ""),
+            ),
+        ]);
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(stats.turns_inserted, 1);
+        let turn = stored_turn(&db_tmp, "msg_m").await;
+        assert_eq!(
+            (turn.tool_names.as_str(), turn.category.as_str()),
+            ("Edit", "coding")
+        );
+        assert_eq!(turn.tool_use_ids.as_deref(), Some("toolu_e"));
+    }
+
+    /// A subagent message's first line is written while it streams; the
+    /// turn holds the final line's output tokens, and is priced by them.
+    #[tokio::test]
+    async fn a_streamed_message_keeps_its_final_output_tokens() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[
+            assistant_line("msg_s", 8, "null", THINKING),
+            assistant_line("msg_s", 1200, r#""end_turn""#, TEXT),
+        ]);
+
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        let turn = stored_turn(&db_tmp, "msg_s").await;
+        assert_eq!(turn.output_tokens, 1200);
+        let priced = pricing::cost_of_turn("claude-opus-4-6", 3, 1200, 0, 20);
+        assert!(priced > 0.0);
+        assert!((turn.cost_usd - priced).abs() < f64::EPSILON);
+    }
+
+    /// A file read again from its start (its offset lost) changes no turn:
+    /// no output counted twice, no tool name repeated.
+    #[tokio::test]
+    async fn a_transcript_read_twice_changes_no_turn() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[
+            assistant_line("msg_r", 8, "null", &tool_use("toolu_a", "Read", "")),
+            assistant_line("msg_r", 8, "null", &tool_use("toolu_b", "Read", "")),
+            assistant_line(
+                "msg_r",
+                900,
+                r#""tool_use""#,
+                &tool_use("toolu_c", "Bash", "git status"),
+            ),
+        ]);
+        ingest_claude_from_home(&gdb, home.path()).await;
+        let once = stored_turn(&db_tmp, "msg_r").await;
+        assert_eq!(once.tool_names, "Read,Read,Bash");
+        assert_eq!(once.category, "git_ops");
+
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute("DELETE FROM parse_offsets", ())
+            .await
+            .unwrap();
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(stats.turns_inserted, 0);
+        assert_eq!(stored_turn(&db_tmp, "msg_r").await, once);
+    }
+
+    /// A parse that stops between two lines of a message and resumes later
+    /// records the turn a single pass records.
+    #[tokio::test]
+    async fn a_message_split_by_a_resumed_parse_is_recorded_whole() {
+        let lines = [
+            assistant_line(
+                "msg_p",
+                8,
+                "null",
+                &tool_use("toolu_a", "Bash", "fix the import"),
+            ),
+            assistant_line("msg_p", 8, "null", TEXT),
+            assistant_line(
+                "msg_p",
+                640,
+                r#""tool_use""#,
+                &tool_use("toolu_b", "Edit", ""),
+            ),
+        ];
+
+        let single_tmp = TempDir::new().unwrap();
+        let single = open_test_db(&single_tmp).await;
+        let (single_home, _) = session_home(&lines);
+        ingest_claude_from_home(&single, single_home.path()).await;
+
+        let split_tmp = TempDir::new().unwrap();
+        let split = open_test_db(&split_tmp).await;
+        let (split_home, transcript) = session_home(&lines[..2]);
+        let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        set_mtime(&transcript, earlier);
+        ingest_claude_from_home(&split, split_home.path()).await;
+        std::fs::write(&transcript, lines.join("\n") + "\n").unwrap();
+        ingest_claude_from_home(&split, split_home.path()).await;
+
+        let whole = stored_turn(&single_tmp, "msg_p").await;
+        assert_eq!(whole.category, "debugging");
+        assert_eq!(whole.output_tokens, 640);
+        assert_eq!(stored_turn(&split_tmp, "msg_p").await, whole);
+    }
+
+    /// Tool results are attributed to the turn whose line issued the call,
+    /// whichever line of the message that was (#474 with #250).
+    #[tokio::test]
+    async fn a_result_reaches_a_call_from_a_later_line() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let result = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_g","content":"0123456789012345678901234567890123456789"}]}}"#;
+        let (home, _) = session_home(&[
+            assistant_line("msg_t", 8, "null", TEXT),
+            assistant_line(
+                "msg_t",
+                8,
+                r#""tool_use""#,
+                &tool_use("toolu_g", "Grep", ""),
+            ),
+            result.to_string(),
+        ]);
+
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        let turn = stored_turn(&db_tmp, "msg_t").await;
+        assert_eq!(
+            (turn.tool_names.as_str(), turn.tool_result_tokens),
+            ("Grep", 10)
+        );
     }
 }

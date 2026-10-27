@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod parser;
 mod pi;
 pub mod pricing;
+pub mod turn_merge;
 
 pub use classifier::TaskCategory;
 pub use discover::{analyze, DiscoverReport};
