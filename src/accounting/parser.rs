@@ -147,7 +147,11 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<Claude
                 }
                 if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
                     tool_names_vec.push(name.to_string());
-                    if let Some(id) = id {
+                    // A later line is merged by call id, and the ids are
+                    // stored comma-joined: an empty id, or one holding a
+                    // comma, is never found again, so its call would be
+                    // appended on every read of the line.
+                    if let Some(id) = id.filter(|id| !id.is_empty() && !id.contains(',')) {
                         calls.push(ToolCall {
                             id: id.to_string(),
                             name: name.to_string(),
@@ -1304,5 +1308,41 @@ mod tests {
             (turn.tool_names.as_str(), turn.tool_result_tokens),
             ("Grep", 10)
         );
+    }
+
+    /// Ingests `lines`, clears the offsets, ingests again; returns the turn
+    /// `message_id` after each pass.
+    async fn turn_after_two_reads(lines: &[String], message_id: &str) -> (StoredTurn, StoredTurn) {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(lines);
+        ingest_claude_from_home(&gdb, home.path()).await;
+        let once = stored_turn(&db_tmp, message_id).await;
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute("DELETE FROM parse_offsets", ())
+            .await
+            .unwrap();
+        ingest_claude_from_home(&gdb, home.path()).await;
+        (once, stored_turn(&db_tmp, message_id).await)
+    }
+
+    /// A call id that is empty, or holds a comma, cannot be found again in
+    /// the stored list: reading its line again must still add nothing.
+    #[tokio::test]
+    async fn a_call_with_an_unusable_id_is_not_appended_on_every_read() {
+        for id in ["", "toolu_a,b"] {
+            let (once, twice) = turn_after_two_reads(
+                &[
+                    assistant_line("msg_u", 8, "null", TEXT),
+                    assistant_line("msg_u", 8, r#""tool_use""#, &tool_use(id, "Read", "")),
+                ],
+                "msg_u",
+            )
+            .await;
+            assert_eq!(twice, once, "{id:?}");
+        }
     }
 }

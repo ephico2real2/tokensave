@@ -79,8 +79,9 @@ pub struct TurnState {
 /// - `thinking_tokens`, `speed` and `service_tier` are filled where the turn
 ///   lacks them, never overwritten.
 ///
-/// A turn recorded before #250 keeps its tools and category: which calls it
-/// holds is unknown, so appending could repeat one.
+/// A turn recorded before #250 with tool names keeps its tools and category:
+/// which calls it holds is unknown, so appending could repeat one. One with
+/// none holds no call, and is merged into as any other.
 pub fn merge_line(stored: &TurnState, line: &ClaudeLine) -> Option<TurnState> {
     let turn = &line.turn;
     let mut next = stored.clone();
@@ -99,7 +100,7 @@ pub fn merge_line(stored: &TurnState, line: &ClaudeLine) -> Option<TurnState> {
         );
     }
 
-    if let (Some(ids), Some(bash)) = (&stored.tool_use_ids, stored.bash_signals) {
+    if let Some((ids, bash)) = recorded_calls(stored) {
         let mut ids = split(ids);
         let mut names = split(&stored.tool_names);
         let mut added = false;
@@ -129,6 +130,18 @@ pub fn merge_line(stored: &TurnState, line: &ClaudeLine) -> Option<TurnState> {
         .or_else(|| turn.detail.service_tier.clone());
 
     (next != *stored).then_some(next)
+}
+
+/// The call ids and Bash signals `stored` was recorded with, or `None` when
+/// they are unknown. A turn recorded without them (before #250, or by an
+/// older binary writing the same database) that has no tool names recorded no
+/// call, and so no Bash command: its calls are known to be none.
+fn recorded_calls(stored: &TurnState) -> Option<(&str, BashSignals)> {
+    match (&stored.tool_use_ids, stored.bash_signals) {
+        (Some(ids), Some(bash)) => Some((ids.as_str(), bash)),
+        (None, None) if stored.tool_names.is_empty() => Some(("", BashSignals::default())),
+        _ => None,
+    }
 }
 
 fn counters(turn: &TurnState) -> (u64, u64, u64, u64) {
@@ -306,5 +319,20 @@ mod tests {
         assert_eq!(state.tool_names, "Read");
         assert_eq!(state.category, "exploration");
         assert_eq!(state.output_tokens, 1200);
+    }
+
+    /// A turn recorded before the merge with no tool names held no call, so
+    /// its later calls join it exactly once.
+    #[test]
+    fn a_turn_recorded_before_the_merge_without_tools_gains_later_calls() {
+        let mut legacy = inserted(&line(8, &[], &[]));
+        legacy.tool_use_ids = None;
+        legacy.bash_signals = None;
+        let later = line(1200, &[("toolu_b", "Bash")], &["git status"]);
+        let state = merge_line(&legacy, &later).unwrap();
+        assert_eq!(state.tool_names, "Bash");
+        assert_eq!(state.tool_use_ids.as_deref(), Some("toolu_b"));
+        assert_eq!(state.category, "git_ops");
+        assert_eq!(merge_line(&state, &later), None);
     }
 }

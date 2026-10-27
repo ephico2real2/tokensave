@@ -815,8 +815,8 @@ impl GlobalDb {
         if written {
             tx.commit().await.is_ok()
         } else {
-            // Dropping an open transaction also rolls back, but panics when
-            // that rollback fails.
+            // Rolled back here so the outcome is not left to `Drop`; if the
+            // ROLLBACK itself fails, libsql's `Drop` panics either way.
             let _ = tx.rollback().await;
             false
         }
