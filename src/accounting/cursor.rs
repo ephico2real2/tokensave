@@ -195,8 +195,8 @@ pub struct SyncOptions {
     pub email: Option<String>,
 }
 
-/// Where a sync reads its inputs from.
-#[derive(Debug, Clone)]
+/// Where a sync reads its inputs from. Its `Debug` redacts the Admin key.
+#[derive(Clone)]
 pub struct SyncEnv {
     /// The user's home: `~/.cursor/chats` and the Cursor app's data are under it.
     pub home: PathBuf,
@@ -208,6 +208,19 @@ pub struct SyncEnv {
     pub dashboard_endpoint: String,
     /// Now, in unix milliseconds: the end of the window.
     pub now_ms: u64,
+}
+
+impl fmt::Debug for SyncEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SyncEnv")
+            .field("home", &self.home)
+            .field("data_home", &self.data_home)
+            .field("admin_key", &self.admin_key.as_ref().map(|_| "[redacted]"))
+            .field("admin_endpoint", &self.admin_endpoint)
+            .field("dashboard_endpoint", &self.dashboard_endpoint)
+            .field("now_ms", &self.now_ms)
+            .finish()
+    }
 }
 
 impl SyncEnv {
@@ -300,7 +313,10 @@ struct Event {
 
 impl Event {
     fn total_tokens(&self) -> u64 {
-        self.input + self.output + self.cache_read + self.cache_write
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write)
     }
 
     /// Whether this snapshot replaces `other`: more tokens, or as many and a
@@ -517,6 +533,45 @@ fn state_db_path(home: &Path) -> PathBuf {
     }
 }
 
+/// What to open for the Cursor app's state database: its path, or, for a
+/// WAL-mode database with no `-wal` file beside it (the app is not running,
+/// so everything is in the main file), an immutable URI. A read-only open of
+/// a WAL-mode database otherwise creates `-wal` and `-shm` files in the
+/// app's folder and leaves them there; an immutable open takes no lock and
+/// creates nothing. When a `-wal` file exists the app may be writing, so the
+/// open is the ordinary read-only one: it reads under the app's locks and
+/// updates the shared `-shm` index, as every reader does, and changes
+/// neither the database nor its `-wal`. A rollback-journal database is opened
+/// by its path, under SQLite's shared lock, which creates nothing.
+fn state_db_target(state_db: &Path) -> PathBuf {
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+    let mut header = [0u8; 20];
+    // Bytes 18 and 19 of the header are the file format versions: 2 is WAL.
+    let wal_mode = std::fs::File::open(state_db)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .is_ok()
+        && header[18] == 2;
+    let mut wal = state_db.as_os_str().to_owned();
+    wal.push("-wal");
+    let Some(text) = state_db.to_str() else {
+        return state_db.to_path_buf();
+    };
+    if !wal_mode || Path::new(&wal).exists() {
+        return state_db.to_path_buf();
+    }
+    let mut uri = String::from("file:");
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            let _ = write!(uri, "%{byte:02X}");
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    PathBuf::from(uri)
+}
+
 /// Reads the Cursor app's access token, opening its database read only.
 async fn read_login_token(state_db: &Path) -> Result<Secret, SyncError> {
     if !state_db.is_file() {
@@ -525,7 +580,7 @@ async fn read_login_token(state_db: &Path) -> Result<Secret, SyncError> {
         ));
     }
     let unreadable = SyncError::LoginUnavailable("the Cursor app's data could not be read");
-    let db = libsql::Builder::new_local(state_db)
+    let db = libsql::Builder::new_local(state_db_target(state_db))
         .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .build()
         .await
@@ -1360,5 +1415,227 @@ mod tests {
         assert_eq!(admin_key(&env), Err(SyncError::KeyFileMode(path.clone())));
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(admin_key(&env), Ok(Some(Secret("key".to_string()))));
+    }
+
+    // ---- OB3 harness (review copy only) ----
+
+    fn ob3_snapshot(dir: &Path) -> Vec<(String, u64, String)> {
+        let mut out: Vec<(String, u64, String)> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| {
+                let bytes = std::fs::read(e.path()).unwrap_or_default();
+                (
+                    e.file_name().to_string_lossy().to_string(),
+                    bytes.len() as u64,
+                    hex::encode(Sha256::digest(&bytes)),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    async fn ob3_make_db(home: &Path, wal: bool) -> PathBuf {
+        let path = state_db_path(home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let db = libsql::Builder::new_local(&path).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        if wal {
+            conn.query("PRAGMA journal_mode = WAL", ()).await.unwrap();
+        }
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable (key, value) VALUES ('cursorAuth/accessToken', ?1)",
+            libsql::params![FAKE_TOKEN],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        drop(db);
+        path
+    }
+
+    #[tokio::test]
+    async fn ob3_read_leaves_the_state_db_byte_identical() {
+        for wal in [false, true] {
+            let home = tempfile::TempDir::new().unwrap();
+            let path = ob3_make_db(home.path(), wal).await;
+            let dir = path.parent().unwrap().to_path_buf();
+            let before = ob3_snapshot(&dir);
+            let token = read_login_token(&path).await;
+            let after = ob3_snapshot(&dir);
+            println!("OB3 wal={wal} before={before:?}");
+            println!("OB3 wal={wal} after ={after:?} ok={}", token.is_ok());
+            assert!(token.is_ok());
+            assert_eq!(before, after, "wal={wal}: the read changed the folder");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ob3_read_needs_no_write_permission() {
+        use std::os::unix::fs::PermissionsExt;
+        for wal in [false, true] {
+            let home = tempfile::TempDir::new().unwrap();
+            let path = ob3_make_db(home.path(), wal).await;
+            let dir = path.parent().unwrap().to_path_buf();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let token = read_login_token(&path).await;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            println!(
+                "OB3 readonly-fs wal={wal} ok={} err={:?}",
+                token.is_ok(),
+                token.as_ref().err()
+            );
+            assert!(token.is_ok(), "wal={wal}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ob3_read_while_the_app_holds_a_write_transaction() {
+        for wal in [false, true] {
+            let home = tempfile::TempDir::new().unwrap();
+            let path = ob3_make_db(home.path(), wal).await;
+            // The "Cursor app": an open connection inside a write transaction.
+            let app = libsql::Builder::new_local(&path).build().await.unwrap();
+            let app_conn = app.connect().unwrap();
+            app_conn.execute("BEGIN IMMEDIATE", ()).await.unwrap();
+            app_conn
+                .execute("INSERT INTO ItemTable (key, value) VALUES ('k', 'v')", ())
+                .await
+                .unwrap();
+            let start = std::time::Instant::now();
+            let token = read_login_token(&path).await;
+            let took = start.elapsed();
+            let commit = app_conn.execute("COMMIT", ()).await;
+            println!(
+                "OB3 concurrent wal={wal} read_ok={} took={took:?} app_commit_ok={}",
+                token.is_ok(),
+                commit.is_ok()
+            );
+            assert!(token.is_ok());
+            assert!(commit.is_ok(), "the app could not commit after the read");
+        }
+    }
+
+    #[test]
+    fn ob3_sync_env_debug_prints_the_admin_key() {
+        let home = tempfile::TempDir::new().unwrap();
+        let env = env_with(
+            home.path(),
+            "http://127.0.0.1:9",
+            Some("key_OB3-ADMIN-SECRET"),
+        );
+        let printed = format!("{env:?}");
+        println!("OB3 SyncEnv Debug = {printed}");
+        assert!(
+            !printed.contains("OB3-ADMIN-SECRET"),
+            "SyncEnv's Debug prints the Admin key"
+        );
+    }
+
+    #[test]
+    fn ob3_full_pages_forever_stop_at_max_pages() {
+        let full: Vec<Value> = (0..DASHBOARD_PAGE_SIZE).map(|_| json!({})).collect();
+        let body =
+            json!({"totalUsageEventsCount": 1_000_000_000_000u64, "usageEventsDisplay": full,
+            "pagination": {"hasNextPage": true}})
+            .to_string();
+        let (url, requests) = serve(vec![(200, body); (MAX_PAGES + 5) as usize]);
+        let agent = crate::cloud::agent_without_redirects(REQUEST_TIMEOUT);
+        let auth = Auth::Login(Secret("x".into()));
+        let start = std::time::Instant::now();
+        let result = fetch(&agent, &url, &auth, 0, 1, None);
+        let n = requests.lock().unwrap().len();
+        println!(
+            "OB3 forever: result_err={:?} requests={n} took={:?}",
+            result.as_ref().err(),
+            start.elapsed()
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SyncError::TooManyPages(SourceKind::Login)
+        );
+        assert_eq!(n as u64, MAX_PAGES);
+    }
+
+    #[tokio::test]
+    async fn ob3_upsert_never_lowers_a_stored_row() {
+        let home = tempfile::TempDir::new().unwrap();
+        let db = open_db(home.path()).await;
+        let mut folders = HashMap::new();
+        folders.insert("conv-1".to_string(), "/work/repo".to_string());
+        let ev = |input: u64, cents: Option<f64>| {
+            let mut r = row("e1", 1_000_000, "m", input, 0.0);
+            if let Some(c) = cents {
+                r["chargedCents"] = json!(c);
+                r["tokenUsage"]["totalCents"] = json!(c);
+            } else {
+                r.as_object_mut().unwrap().remove("chargedCents");
+                r["tokenUsage"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("totalCents");
+                r["model"] = json!("no-such-model-ob3");
+            }
+            parse_event(&r).unwrap()
+        };
+        let big = turn_of(&ev(30, Some(3.0)), &folders);
+        assert_eq!(
+            db.upsert_cursor_turns(&[big], false)
+                .await
+                .unwrap()
+                .inserted,
+            1
+        );
+        let stored = db.cursor_turn_row("cursor:e1").await.unwrap();
+        // smaller tokens, higher cost; equal tokens, lower cost; equal tokens, unknown cost; no project
+        let mut no_project = turn_of(&ev(30, Some(1.0)), &HashMap::new());
+        no_project.project_hash = "unknown".into();
+        for (label, t) in [
+            (
+                "smaller-tokens-higher-cost",
+                turn_of(&ev(10, Some(99.0)), &folders),
+            ),
+            (
+                "equal-tokens-lower-cost",
+                turn_of(&ev(30, Some(1.0)), &folders),
+            ),
+            (
+                "equal-tokens-unknown-cost",
+                turn_of(&ev(30, None), &folders),
+            ),
+            ("no-project-lower", no_project),
+        ] {
+            let w = db.upsert_cursor_turns(&[t], false).await.unwrap();
+            let now = db.cursor_turn_row("cursor:e1").await.unwrap();
+            println!("OB3 upsert {label}: {w:?} row={now:?}");
+            assert_eq!(w.unchanged, 1, "{label}");
+            assert_eq!(now, stored, "{label}");
+        }
+        // A larger snapshot with no project keeps the stored project.
+        let mut larger = turn_of(&ev(40, Some(4.0)), &HashMap::new());
+        larger.project_hash = "unknown".into();
+        let w = db.upsert_cursor_turns(&[larger], false).await.unwrap();
+        let now = db.cursor_turn_row("cursor:e1").await.unwrap();
+        println!("OB3 upsert larger-no-project: {w:?} row={now:?}");
+        assert_eq!((w.updated, now.2.as_str()), (1, "-work-repo"));
+    }
+
+    #[test]
+    fn ob3_huge_token_counts_do_not_panic() {
+        let r = json!({"usageEventId": "e", "timestamp": "1000", "model": "m",
+            "tokenUsage": {"inputTokens": 1e30, "outputTokens": 1e30, "totalCents": 1}});
+        let a = parse_event(&r).unwrap();
+        let outcome = std::panic::catch_unwind(|| collapse(vec![a.clone(), a.clone()]));
+        println!("OB3 huge tokens: collapse panicked = {}", outcome.is_err());
+        assert!(outcome.is_ok(), "collapse panicked on huge token counts");
     }
 }
