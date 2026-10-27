@@ -91,9 +91,19 @@ pub fn claim(home: &Path) -> io::Result<Result<Claim, State>> {
     let deadline = Instant::now() + CLAIM_PATIENCE;
     loop {
         if lock.try_lock_exclusive().is_ok() {
+            // A server killed outright (SIGKILL, a crash, a power cut) leaves
+            // its state file; its PID may now be another process's. Until this
+            // server records its own, `state` must not believe it, or a `stop`
+            // in that moment signals whatever process has the PID.
+            let state_path = home.join(STATE_FILE);
+            match std::fs::remove_file(&state_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
             return Ok(Ok(Claim {
                 _lock: lock,
-                state_path: home.join(STATE_FILE),
+                state_path,
             }));
         }
         if Instant::now() >= deadline {
@@ -205,6 +215,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state(home.path()), State::Stopped);
+    }
+
+    #[test]
+    fn a_stale_state_file_is_not_believed_once_a_new_server_holds_the_lock() {
+        let home = tempfile::TempDir::new().unwrap();
+        std::fs::write(home.path().join(LOCK_FILE), "").unwrap();
+        // Left by a server that was killed: its PID may belong to anything now.
+        let stale = Instance {
+            pid: 1,
+            bind: "127.0.0.1".into(),
+            port: 1,
+            started_at: 1,
+        };
+        std::fs::write(
+            home.path().join(STATE_FILE),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+        let claim = claim(home.path()).unwrap().unwrap();
+        assert_eq!(state(home.path()), State::Starting);
+        claim.record(&instance()).unwrap();
+        assert_eq!(state(home.path()), State::Running(instance()));
     }
 
     #[test]

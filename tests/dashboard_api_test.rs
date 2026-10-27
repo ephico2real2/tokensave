@@ -446,10 +446,7 @@ async fn serve(
 ) -> (u16, tokio::sync::oneshot::Sender<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let server = Arc::new(Server {
-        api: context(fx, port),
-        assets,
-    });
+    let server = Arc::new(Server::new(context(fx, port), assets));
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(http::serve(listener, server, async {
         let _ = stopped.await;
@@ -1449,7 +1446,8 @@ async fn an_invalid_parameter_is_a_400_that_names_it() {
     for (path, parameter) in [
         ("/api/summary?range=14", "range"),
         ("/api/summary?range=custom&from=2026-10-01", "to"),
-        ("/api/summary?from=2026-10-28&to=2026-10-28", "to"),
+        // A day past UTC today: no viewer's local date is that far ahead.
+        ("/api/summary?from=2026-10-29&to=2026-10-29", "to"),
         ("/api/summary?from=2026-10-20&to=2026-10-10", "from"),
         ("/api/daily?from=2026-13-01&to=2026-10-10", "from"),
         ("/api/summary?range=7&from=2026-10-01&to=2026-10-02", "from"),

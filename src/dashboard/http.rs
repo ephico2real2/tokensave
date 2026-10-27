@@ -26,11 +26,31 @@ use super::params;
 /// The policy every response carries: nothing from another origin.
 pub const CSP: &str = "default-src 'self'";
 
+/// How many requests read `global.db` at once. SQLite runs on the runtime's
+/// worker threads, so without a bound a burst of API requests occupies every
+/// worker: `/api/status` and the page wait behind it, and each open
+/// connection holds its own page cache. Two keep a page load as fast as
+/// with no bound, since the page's requests contend for the CPU anyway.
+/// Requests beyond the bound wait without holding a thread.
+const DB_READS: usize = 2;
+
 /// What the server needs: the API's context and the page's files.
 pub struct Server {
     pub api: Context,
     /// The page's files by path, `index.html` among them once it is built.
     pub assets: &'static [(&'static str, &'static [u8])],
+    /// [`DB_READS`] permits, one per request reading the database.
+    db_reads: tokio::sync::Semaphore,
+}
+
+impl Server {
+    pub fn new(api: Context, assets: &'static [(&'static str, &'static [u8])]) -> Self {
+        Self {
+            api,
+            assets,
+            db_reads: tokio::sync::Semaphore::new(DB_READS),
+        }
+    }
 }
 
 /// Serves `listener` until `shutdown` completes. Connections in progress
@@ -71,11 +91,7 @@ pub async fn serve(
 
 /// Answers one request.
 async fn handle(server: &Server, request: &Request<Incoming>) -> Response<Full<Bytes>> {
-    let host = request
-        .headers()
-        .get(HOST)
-        .and_then(|value| value.to_str().ok());
-    if !host.is_some_and(|host| host_allowed(host, server.api.bind, server.api.port)) {
+    if !names_this_server(request, server.api.bind, server.api.port) {
         return plain(
             StatusCode::FORBIDDEN,
             "this server answers only on its loopback address\n",
@@ -109,6 +125,26 @@ pub fn host_allowed(host: &str, bind: IpAddr, port: u16) -> bool {
     ["127.0.0.1", "localhost", "[::1]", bind.as_str()]
         .iter()
         .any(|name| host == format!("{name}:{port}"))
+}
+
+/// Whether `request` is addressed to this server: exactly one `Host`, which
+/// [`host_allowed`] accepts, and for an absolute-form target
+/// (`GET http://name/ HTTP/1.1`) a name it accepts too, since that name then
+/// wins over `Host` (RFC 9112, section 3.2.2). Two `Host` lines are refused,
+/// as RFC 9112 section 3.2 requires.
+fn names_this_server<B>(request: &Request<B>, bind: IpAddr, port: u16) -> bool {
+    let mut hosts = request.headers().get_all(HOST).iter();
+    let (Some(host), None) = (hosts.next(), hosts.next()) else {
+        return false;
+    };
+    let target_ok = request
+        .uri()
+        .authority()
+        .is_none_or(|authority| host_allowed(authority.as_str(), bind, port));
+    target_ok
+        && host
+            .to_str()
+            .is_ok_and(|host| host_allowed(host, bind, port))
 }
 
 /// The JSON of one API endpoint.
@@ -147,6 +183,12 @@ async fn api_response(
     if endpoint == "status" {
         return to_json(&api::status(ctx));
     }
+    let _permit = server.db_reads.acquire().await.map_err(|_| ApiError {
+        // Only a closed semaphore refuses, and this one is never closed.
+        status: 500,
+        message: "no database read permit".to_string(),
+        parameter: None,
+    })?;
     let db = api::open_read_only(&ctx.db_path).await?;
     match endpoint {
         "summary" => to_json(&api::summary(&db, &params).await?),
@@ -263,6 +305,7 @@ fn error_response(error: &ApiError) -> Response<Full<Bytes>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -282,6 +325,74 @@ mod tests {
         ));
         let v6: IpAddr = "::1".parse().unwrap_or(v4);
         assert!(host_allowed("[::1]:7311", v6, 7311));
+    }
+
+    #[test]
+    fn a_request_names_this_server_only_with_one_allowed_host_and_target() {
+        let v4 = IpAddr::from([127, 0, 0, 1]);
+        let request = |target: &str, hosts: &[&str]| {
+            let mut builder = Request::builder().uri(target);
+            for host in hosts {
+                builder = builder.header(HOST, *host);
+            }
+            builder.body(()).unwrap()
+        };
+        assert!(names_this_server(
+            &request("/api/status", &["127.0.0.1:7311"]),
+            v4,
+            7311
+        ));
+        assert!(names_this_server(
+            &request("http://localhost:7311/api/status", &["127.0.0.1:7311"]),
+            v4,
+            7311
+        ));
+        assert!(!names_this_server(&request("/api/status", &[]), v4, 7311));
+        assert!(!names_this_server(
+            &request("/api/status", &["127.0.0.1:7311", "evil.example"]),
+            v4,
+            7311
+        ));
+        assert!(!names_this_server(
+            &request("http://evil.example/api/status", &["127.0.0.1:7311"]),
+            v4,
+            7311
+        ));
+    }
+
+    #[tokio::test]
+    async fn database_reads_wait_for_a_permit_and_status_does_not() {
+        let server = Server::new(
+            Context {
+                db_path: std::path::PathBuf::from("/nonexistent/ob3/global.db"),
+                bind: IpAddr::from([127, 0, 0, 1]),
+                port: 7311,
+                default_range_days: 30,
+                home: None,
+                codex_home: None,
+                now: || 1_793_000_000,
+            },
+            &[],
+        );
+        let held = server.db_reads.acquire_many(DB_READS as u32).await.unwrap();
+        let wait = Duration::from_millis(200);
+        assert!(
+            tokio::time::timeout(wait, api_response(&server, "status", None))
+                .await
+                .is_ok(),
+            "status needs no permit"
+        );
+        assert!(
+            tokio::time::timeout(wait, api_response(&server, "summary", None))
+                .await
+                .is_err(),
+            "a database read waits while every permit is held"
+        );
+        drop(held);
+        let answer = tokio::time::timeout(wait, api_response(&server, "summary", None))
+            .await
+            .expect("a free permit lets the read run");
+        assert_eq!(answer.unwrap_err().status, 503);
     }
 
     #[test]

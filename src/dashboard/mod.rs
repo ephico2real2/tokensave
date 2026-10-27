@@ -131,8 +131,8 @@ pub async fn run_foreground(
     claim.record(&running).map_err(io)?;
     announce(&running);
 
-    let server = Arc::new(http::Server {
-        api: api::Context {
+    let server = Arc::new(http::Server::new(
+        api::Context {
             db_path: home.join("global.db"),
             bind: config.bind,
             port,
@@ -141,8 +141,8 @@ pub async fn run_foreground(
             codex_home: codex_home(),
             now,
         },
-        assets: assets::ASSETS,
-    });
+        assets::ASSETS,
+    ));
     http::serve(listener, server, shutdown_signal()).await;
     drop(claim);
     Ok(None)

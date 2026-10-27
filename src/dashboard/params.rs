@@ -266,7 +266,10 @@ fn window(
         parse_day(from).ok_or_else(|| ParamError::new("from", "must be a date, YYYY-MM-DD"))?;
     let last_day =
         parse_day(to).ok_or_else(|| ParamError::new("to", "must be a date, YYYY-MM-DD"))?;
-    if last_day > today {
+    // The page offers the viewer's local date, which east of UTC is up to a
+    // day ahead of the UTC day (UTC+14 at most): refusing it would fail every
+    // custom range there from local midnight until UTC midnight.
+    if last_day > today + 1 {
         return Err(ParamError::new("to", "is after today"));
     }
     if first_day > last_day {
@@ -386,12 +389,19 @@ mod tests {
     }
 
     #[test]
+    fn a_custom_range_may_end_on_the_viewers_local_today_east_of_utc() {
+        // At 2026-10-27 21:00 UTC it is already 2026-10-28 in UTC+3 to UTC+14.
+        let window = ok("range=custom&from=2026-09-29&to=2026-10-28").window;
+        assert_eq!((window.first_day, window.last_day), (TODAY - 28, TODAY + 1));
+    }
+
+    #[test]
     fn a_wrong_range_names_its_parameter() {
         assert_eq!(err("range=14"), "range");
         assert_eq!(err("range=custom&to=2026-10-01"), "from");
         assert_eq!(err("range=custom&from=2026-10-01"), "to");
         assert_eq!(err("range=30&from=2026-10-01&to=2026-10-02"), "from");
-        assert_eq!(err("from=2026-10-28&to=2026-10-28"), "to");
+        assert_eq!(err("from=2026-10-29&to=2026-10-29"), "to");
         assert_eq!(err("from=2026-10-02&to=2026-10-01"), "from");
         assert_eq!(err("from=2026-02-30&to=2026-10-01"), "from");
         assert_eq!(err("from=26-10-01&to=2026-10-01"), "from");
