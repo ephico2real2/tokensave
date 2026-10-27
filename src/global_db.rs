@@ -240,16 +240,7 @@ impl GlobalDb {
         let db = Builder::new_local(db_path).build().await.ok()?;
         let conn = db.connect().ok()?;
 
-        // busy_timeout first: `journal_mode = WAL` takes a lock, and before
-        // the timeout is set a concurrent open fails at once with "database
-        // is locked" (5 to 9 of 160 simultaneous opens) instead of waiting.
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )
-        .await
-        .ok()?;
+        Self::apply_pragmas(&conn).await.ok()?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS projects (
@@ -342,6 +333,41 @@ impl GlobalDb {
         Self::migrate_project_paths(&conn).await;
 
         Some(Self { conn, _db: db })
+    }
+
+    /// Sets the connection's PRAGMAs, retrying a lock error.
+    ///
+    /// busy_timeout first: `journal_mode = WAL` takes a lock, and before the
+    /// timeout is set a concurrent open fails at once with "database is
+    /// locked" (5 to 9 of 160 simultaneous opens) instead of waiting. The
+    /// timeout does not cover every case: SQLite skips the busy handler where
+    /// waiting could deadlock (sqlite.org/c3ref/busy_handler.html), as when a
+    /// new file is first switched to WAL by one connection while others hold
+    /// a read lock (1 of 80 simultaneous first opens). The batch is
+    /// idempotent, so that error is retried.
+    async fn apply_pragmas(conn: &Connection) -> libsql::Result<()> {
+        const ATTEMPTS: u32 = 5;
+        let mut attempt = 1;
+        loop {
+            match conn
+                .execute_batch(
+                    "PRAGMA busy_timeout = 5000;
+                     PRAGMA journal_mode = WAL;
+                     PRAGMA synchronous = NORMAL;",
+                )
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if attempt < ATTEMPTS && error.to_string().contains("database is locked") =>
+                {
+                    // 20, 40, 80, 160 ms.
+                    tokio::time::sleep(std::time::Duration::from_millis(20 << (attempt - 1))).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Opens (or creates) the global database. Returns `None` if the home
@@ -1351,5 +1377,40 @@ mod tests {
                 .count();
         }
         assert_eq!(failed, 0, "opens that returned no database, of 160");
+    }
+
+    /// Processes opening a database that does not exist yet, at the same
+    /// moment, all get it: the first switch of the new file to WAL fails at
+    /// once for the others, past the busy timeout.
+    #[test]
+    fn concurrent_first_opens_all_succeed() {
+        let runtime = || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        };
+        let mut failed = 0;
+        for _ in 0..10 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("global.db");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let opens: Vec<_> = (0..8)
+                .map(|_| {
+                    let (path, barrier) = (path.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        let rt = runtime();
+                        barrier.wait();
+                        rt.block_on(GlobalDb::open_at(&path)).is_none()
+                    })
+                })
+                .collect();
+            failed += opens
+                .into_iter()
+                .map(|open| open.join().unwrap())
+                .filter(|&none| none)
+                .count();
+        }
+        assert_eq!(failed, 0, "first opens that returned no database, of 80");
     }
 }
