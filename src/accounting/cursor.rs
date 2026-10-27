@@ -202,6 +202,9 @@ pub struct SyncEnv {
     pub home: PathBuf,
     /// tokensave's data folder, which may hold [`ADMIN_KEY_FILE`].
     pub data_home: PathBuf,
+    /// The Cursor app's state database, which holds its login. Resolved once
+    /// from the platform's folders, so a test points it into its own folder.
+    pub state_db: PathBuf,
     /// The value of [`ADMIN_KEY_ENV`], read once by the caller.
     pub admin_key: Option<String>,
     pub admin_endpoint: String,
@@ -215,6 +218,7 @@ impl fmt::Debug for SyncEnv {
         f.debug_struct("SyncEnv")
             .field("home", &self.home)
             .field("data_home", &self.data_home)
+            .field("state_db", &self.state_db)
             .field("admin_key", &self.admin_key.as_ref().map(|_| "[redacted]"))
             .field("admin_endpoint", &self.admin_endpoint)
             .field("dashboard_endpoint", &self.dashboard_endpoint)
@@ -235,6 +239,7 @@ impl SyncEnv {
             .as_millis() as u64;
         #[allow(unused_mut)]
         let mut env = Self {
+            state_db: state_db_path(&home),
             home,
             data_home,
             admin_key: std::env::var(ADMIN_KEY_ENV).ok(),
@@ -652,7 +657,7 @@ async fn resolve_auth(env: &SyncEnv, options: &SyncOptions) -> Result<Option<Aut
     if !options.use_login {
         return Ok(None);
     }
-    let token = read_login_token(&state_db_path(&env.home)).await?;
+    let token = read_login_token(&env.state_db).await?;
     session_cookie(token.expose(), env.now_ms / 1000).map(|cookie| Some(Auth::Login(cookie)))
 }
 
@@ -1065,6 +1070,7 @@ mod tests {
         SyncEnv {
             home: home.to_path_buf(),
             data_home: home.join(".tokensave"),
+            state_db: test_state_db(home),
             admin_key: admin_key.map(str::to_string),
             admin_endpoint: url.to_string(),
             dashboard_endpoint: url.to_string(),
@@ -1072,9 +1078,16 @@ mod tests {
         }
     }
 
+    /// Where a test keeps the Cursor app's state database: inside its own
+    /// folder, never the platform's (`state_db_path` reads `APPDATA` and
+    /// `XDG_CONFIG_HOME`, which point at the real app data).
+    fn test_state_db(home: &Path) -> PathBuf {
+        home.join("Cursor/User/globalStorage/state.vscdb")
+    }
+
     /// A Cursor app state database holding `token`.
     async fn fake_state_db(home: &Path, token: &str) {
-        let path = state_db_path(home);
+        let path = test_state_db(home);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let db = libsql::Builder::new_local(&path).build().await.unwrap();
         let conn = db.connect().unwrap();
@@ -1437,7 +1450,7 @@ mod tests {
     }
 
     async fn ob3_make_db(home: &Path, wal: bool) -> PathBuf {
-        let path = state_db_path(home);
+        let path = test_state_db(home);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let db = libsql::Builder::new_local(&path).build().await.unwrap();
         let conn = db.connect().unwrap();
