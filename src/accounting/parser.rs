@@ -495,15 +495,23 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
 
         let (prev_offset, prev_mtime) = gdb.get_parse_offset(&path_str).await.unwrap_or((0, 0));
 
-        if mtime == prev_mtime && prev_offset > 0 {
-            continue;
-        }
-
-        let seek_to = if mtime == prev_mtime || (prev_mtime > 0 && mtime > prev_mtime) {
+        // A file shorter than what was read, or older, was replaced: read it
+        // from its start.
+        let len = meta.len();
+        let seek_to = if len >= prev_offset
+            && (mtime == prev_mtime || (prev_mtime > 0 && mtime > prev_mtime))
+        {
             prev_offset
         } else {
             0
         };
+
+        // Skipped only with nothing past the offset: the mtime is in whole
+        // seconds, and lines appended in the second of the last read leave it
+        // unchanged (#256).
+        if seek_to == len && mtime == prev_mtime {
+            continue;
+        }
 
         let (project_hash, session_id) = extract_path_parts(file_path);
 
@@ -538,6 +546,9 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
                     read_failed = true;
                     break;
                 }
+                // A last line with no newline is still being written; the
+                // offset stays before it, and the next ingest reads it whole.
+                Ok(_) if !line.ends_with('\n') => break,
                 Ok(n) => {
                     current_offset += n as u64;
                     let trimmed = line.trim();
@@ -1423,5 +1434,136 @@ mod tests {
         assert!(!gdb.add_tool_result_tokens("msg_v", "", 10).await);
         assert!(!gdb.add_tool_result_tokens("msg_v", "toolu_a,b", 10).await);
         assert_eq!(stored_turn(&db_tmp, "msg_v").await.tool_result_tokens, 0);
+    }
+
+    /// The message ids of the recorded turns, in order.
+    async fn recorded(db_tmp: &TempDir) -> Vec<String> {
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let db = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        let mut rows = conn
+            .query("SELECT message_id FROM turns ORDER BY message_id", ())
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            ids.push(row.get(0).unwrap());
+        }
+        ids
+    }
+
+    /// The start of the current second, so two writes can share it.
+    fn this_second() -> std::time::SystemTime {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(now.as_secs())
+    }
+
+    fn append(path: &Path, text: &str) {
+        use std::io::Write;
+        std::fs::File::options()
+            .append(true)
+            .open(path)
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+    }
+
+    /// Lines appended in the same second as the last read are read by the
+    /// next ingest, though the file's mtime in seconds has not changed (#256).
+    #[tokio::test]
+    async fn lines_written_in_the_same_second_as_a_read_are_read() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, transcript) = session_home(&[assistant_line("msg_a", 8, "null", TEXT)]);
+        let second = this_second();
+        set_mtime(&transcript, second + std::time::Duration::from_millis(100));
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        append(
+            &transcript,
+            &(assistant_line("msg_b", 8, r#""end_turn""#, TEXT) + "\n"),
+        );
+        set_mtime(&transcript, second + std::time::Duration::from_millis(900));
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(recorded(&db_tmp).await, ["msg_a", "msg_b"]);
+    }
+
+    /// A last line with no newline is still being written: it is left for
+    /// the next ingest, which reads it whole once it is complete (#256).
+    #[tokio::test]
+    async fn a_line_still_being_written_is_read_once_complete() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let first = assistant_line("msg_a", 8, "null", TEXT) + "\n";
+        let second = assistant_line("msg_b", 1200, r#""end_turn""#, TEXT) + "\n";
+        let (head, tail) = second.split_at(second.len() / 2);
+        let (home, transcript) = session_home(&[]);
+        std::fs::write(&transcript, format!("{first}{head}")).unwrap();
+        set_mtime(
+            &transcript,
+            std::time::SystemTime::now() - std::time::Duration::from_secs(60),
+        );
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(recorded(&db_tmp).await, ["msg_a"]);
+        let key = transcript.to_string_lossy().to_string();
+        assert_eq!(
+            gdb.get_parse_offset(&key).await.map(|(offset, _)| offset),
+            Some(first.len() as u64)
+        );
+
+        append(&transcript, tail);
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(recorded(&db_tmp).await, ["msg_a", "msg_b"]);
+        assert_eq!(stored_turn(&db_tmp, "msg_b").await.output_tokens, 1200);
+    }
+
+    /// A file shorter than the offset stored for it was replaced: it is read
+    /// from its start, even when its mtime is later (#256).
+    #[tokio::test]
+    async fn a_file_shorter_than_its_offset_is_read_from_the_start() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, transcript) = session_home(&[
+            assistant_line("msg_a", 8, "null", TEXT),
+            assistant_line("msg_b", 8, "null", TEXT),
+        ]);
+        set_mtime(
+            &transcript,
+            std::time::SystemTime::now() - std::time::Duration::from_secs(60),
+        );
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        std::fs::write(
+            &transcript,
+            assistant_line("msg_c", 8, r#""end_turn""#, TEXT) + "\n",
+        )
+        .unwrap();
+        set_mtime(&transcript, std::time::SystemTime::now());
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(recorded(&db_tmp).await, ["msg_a", "msg_b", "msg_c"]);
+    }
+
+    /// A file with nothing past its stored offset, and the same mtime, is
+    /// not opened: an unreadable one does not make the coverage partial.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unchanged_file_is_not_opened() {
+        use std::os::unix::fs::PermissionsExt;
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, transcript) = session_home(&[assistant_line("msg_a", 8, "null", TEXT)]);
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+        std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(stats.coverage[0].state, CoverageState::Complete);
     }
 }

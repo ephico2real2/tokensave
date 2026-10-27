@@ -13,14 +13,14 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 ## Inventory summary
 
 - SQL-bearing source files: **37**.
-- SQL literal/template occurrences: **364**.
+- SQL literal/template occurrences: **365**.
 - Functions retained for construction/binding context: **171**.
 
 ## Source file index
 
 | Source file | SQL occurrences |
 | --- | ---: |
-| [src/accounting/parser.rs](../src/accounting/parser.rs) | 5 |
+| [src/accounting/parser.rs](../src/accounting/parser.rs) | 6 |
 | [src/agents/hooks.rs](../src/agents/hooks.rs) | 4 |
 | [src/agents/mod.rs](../src/agents/mod.rs) | 1 |
 | [src/blame_engine.rs](../src/blame_engine.rs) | 16 |
@@ -64,7 +64,7 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 #### Q0356 — `a_run_that_failed_to_record_is_retried`
 
-Source: [src/accounting/parser.rs:1061](../src/accounting/parser.rs#L1061).
+Source: [src/accounting/parser.rs:1072](../src/accounting/parser.rs#L1072).
 
 ```sql
 DROP TABLE agent_runs
@@ -72,7 +72,7 @@ DROP TABLE agent_runs
 
 #### Q0361 — `stored_turn`
 
-Source: [src/accounting/parser.rs:1135](../src/accounting/parser.rs#L1135).
+Source: [src/accounting/parser.rs:1146](../src/accounting/parser.rs#L1146).
 
 ```sql
 SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
@@ -82,7 +82,7 @@ SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
 
 #### Q0362 — `a_transcript_read_twice_changes_no_turn`
 
-Source: [src/accounting/parser.rs:1238](../src/accounting/parser.rs#L1238).
+Source: [src/accounting/parser.rs:1249](../src/accounting/parser.rs#L1249).
 
 ```sql
 DELETE FROM parse_offsets
@@ -90,7 +90,7 @@ DELETE FROM parse_offsets
 
 #### Q0363 — `turn_after_two_reads`
 
-Source: [src/accounting/parser.rs:1326](../src/accounting/parser.rs#L1326).
+Source: [src/accounting/parser.rs:1337](../src/accounting/parser.rs#L1337).
 
 ```sql
 DELETE FROM parse_offsets
@@ -98,10 +98,18 @@ DELETE FROM parse_offsets
 
 #### Q0365 — `a_turn_recorded_before_result_ids_is_added_to_only_while_empty`
 
-Source: [src/accounting/parser.rs:1405](../src/accounting/parser.rs#L1405).
+Source: [src/accounting/parser.rs:1416](../src/accounting/parser.rs#L1416).
 
 ```sql
 UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'
+```
+
+#### Q0366 — `recorded`
+
+Source: [src/accounting/parser.rs:1445](../src/accounting/parser.rs#L1445).
+
+```sql
+SELECT message_id FROM turns ORDER BY message_id
 ```
 
 ### src/agents/hooks.rs
