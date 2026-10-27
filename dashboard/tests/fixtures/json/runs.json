@@ -1,0 +1,93 @@
+[
+  {
+    "id": "s1",
+    "parentId": null,
+    "name": "inkcast · main session",
+    "role": "main",
+    "tool": "Claude Code",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "inputTokens": 412000,
+    "outputTokens": 38000,
+    "costUsd": 7.9,
+    "state": "running"
+  },
+  {
+    "id": "a1",
+    "parentId": "s1",
+    "name": "Build #226",
+    "role": "builder",
+    "tool": "Claude Code",
+    "model": "claude-fable-5-1",
+    "effort": "xhigh",
+    "inputTokens": 1810000,
+    "outputTokens": 230000,
+    "costUsd": 16.1,
+    "state": "finished"
+  },
+  {
+    "id": "a2",
+    "parentId": "s1",
+    "name": "Review PR #178",
+    "role": "reviewer",
+    "tool": "Claude Code",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "inputTokens": 2020000,
+    "outputTokens": 290000,
+    "costUsd": 18.7,
+    "state": "finished"
+  },
+  {
+    "id": "a3",
+    "parentId": "s1",
+    "name": "Review PR #221 (first try)",
+    "role": "reviewer",
+    "tool": "Claude Code",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "inputTokens": 640000,
+    "outputTokens": 80000,
+    "costUsd": 5.3,
+    "state": "stopped"
+  },
+  {
+    "id": "a4",
+    "parentId": "s1",
+    "name": "Find sync callers",
+    "role": "Explore",
+    "tool": "Claude Code",
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "inputTokens": 96000,
+    "outputTokens": 4000,
+    "costUsd": 0.4,
+    "state": "finished"
+  },
+  {
+    "id": "s2",
+    "parentId": null,
+    "name": "service-a · session",
+    "role": "main",
+    "tool": "Codex",
+    "model": "gpt-6.1-sol",
+    "effort": "high",
+    "inputTokens": 380000,
+    "outputTokens": 22000,
+    "costUsd": 2.1,
+    "state": "finished"
+  },
+  {
+    "id": "s3",
+    "parentId": null,
+    "name": "infra-lab · session",
+    "role": "main",
+    "tool": "Cursor",
+    "model": "grok-4.7-high",
+    "effort": null,
+    "inputTokens": 120000,
+    "outputTokens": 9000,
+    "costUsd": 0.8,
+    "state": "finished"
+  }
+]

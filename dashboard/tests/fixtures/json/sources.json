@@ -1,0 +1,42 @@
+[
+  {
+    "tool": "Claude Code",
+    "path": "~/.claude/projects/",
+    "turns": 18402,
+    "lastParsed": "2026-10-26T11:58:00.000Z",
+    "status": "verified",
+    "note": "Model, requested model, effort, thinking, subagent roles."
+  },
+  {
+    "tool": "Codex",
+    "path": "~/.codex/sessions/",
+    "turns": 2961,
+    "lastParsed": "2026-10-26T11:58:00.000Z",
+    "status": "verified",
+    "note": "One turn per response: model and effort from turn context, tokens from its usage record."
+  },
+  {
+    "tool": "Cursor",
+    "path": "Cursor account (tokensave cursor sync)",
+    "turns": 640,
+    "lastParsed": "2026-10-26T11:58:00.000Z",
+    "status": "verified",
+    "note": "Usage per request from your Cursor account; off until you switch it on."
+  },
+  {
+    "tool": "Pi",
+    "path": "~/.pi/agent/sessions/",
+    "turns": null,
+    "lastParsed": null,
+    "status": "not found",
+    "note": "Read by tokensave already; nothing on this machine."
+  },
+  {
+    "tool": "Factory Droid",
+    "path": "(as tokensave reads it)",
+    "turns": null,
+    "lastParsed": null,
+    "status": "not found",
+    "note": "Read by tokensave already; nothing on this machine."
+  }
+]

@@ -183,7 +183,14 @@ mod tests {
             State::Running(instance())
         );
         drop(first);
-        assert_eq!(state(home.path()), State::Stopped);
+        // A process another test forks in this moment holds a copy of the lock's
+        // descriptor until its exec closes it, and flock keeps the lock until the
+        // last copy closes: the release is prompt but not instant.
+        assert_eq!(
+            wait_for(home.path(), Duration::from_secs(5), |s| *s
+                == State::Stopped),
+            State::Stopped
+        );
         assert!(!home.path().join(STATE_FILE).exists());
         assert!(claim(home.path()).unwrap().is_ok());
     }

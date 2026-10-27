@@ -1,0 +1,52 @@
+[
+  {
+    "id": "r1",
+    "name": "Review PR #178",
+    "role": "reviewer",
+    "repo": "inkcast",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "tokens": 2310000,
+    "costUsd": 18.7
+  },
+  {
+    "id": "r2",
+    "name": "Build #226",
+    "role": "builder",
+    "repo": "inkcast",
+    "model": "claude-fable-5-1",
+    "effort": "xhigh",
+    "tokens": 2040000,
+    "costUsd": 16.1
+  },
+  {
+    "id": "r3",
+    "name": "Review PR #217",
+    "role": "reviewer",
+    "repo": "inkcast",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "tokens": 1880000,
+    "costUsd": 15.2
+  },
+  {
+    "id": "r4",
+    "name": "Build #213",
+    "role": "builder",
+    "repo": "inkcast",
+    "model": "claude-fable-5-1",
+    "effort": "xhigh",
+    "tokens": 1210000,
+    "costUsd": 9.6
+  },
+  {
+    "id": "r5",
+    "name": "Main session",
+    "role": "main",
+    "repo": "inkcast",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "tokens": 970000,
+    "costUsd": 7.9
+  }
+]

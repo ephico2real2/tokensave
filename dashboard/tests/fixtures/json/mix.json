@@ -1,0 +1,41 @@
+{
+  "byTool": [
+    {
+      "tool": "Claude Code",
+      "tokens": 39500000,
+      "share": 0.82
+    },
+    {
+      "tool": "Codex",
+      "tokens": 7200000,
+      "share": 0.15
+    },
+    {
+      "tool": "Cursor",
+      "tokens": 1500000,
+      "share": 0.03
+    }
+  ],
+  "byModel": [
+    {
+      "model": "claude-opus-5-5",
+      "tokens": 29400000,
+      "share": 0.61
+    },
+    {
+      "model": "claude-fable-5-1",
+      "tokens": 13000000,
+      "share": 0.27
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "tokens": 4300000,
+      "share": 0.09
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "tokens": 1500000,
+      "share": 0.03
+    }
+  ]
+}

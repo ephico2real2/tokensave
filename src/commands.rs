@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::{AccountingAction, BranchAction, DashboardAction};
+use crate::cli::{AccountingAction, BranchAction, CursorAction, DashboardAction};
 use crate::global;
 use crate::Spinner;
 use tokensave::config::{discover_project, ProjectDiscovery};
@@ -1199,6 +1199,123 @@ async fn handle_backfill(dry_run: bool) -> tokensave::errors::Result<()> {
         println!(
             "  {} turns have no transcript left; their detail stays unknown.",
             format_number(gone)
+        );
+    }
+    Ok(())
+}
+
+/// `tokensave cursor <action>`.
+pub(crate) async fn handle_cursor(action: CursorAction) -> tokensave::errors::Result<()> {
+    match action {
+        CursorAction::Sync {
+            since,
+            dry_run,
+            use_login,
+            email,
+        } => handle_cursor_sync(since, dry_run, use_login, email).await,
+    }
+}
+
+/// Fetches Cursor usage and prints what it recorded, as counts only. A
+/// failure prints its reason and exits 1, having written nothing.
+async fn handle_cursor_sync(
+    since: Option<String>,
+    dry_run: bool,
+    use_login: bool,
+    email: Option<String>,
+) -> tokensave::errors::Result<()> {
+    use tokensave::accounting::cursor::{self, SyncOptions, SyncOutcome};
+    use tokensave::display::format_number;
+
+    let config_error = |message: String| tokensave::errors::TokenSaveError::Config { message };
+    let since = match since.as_deref() {
+        Some(date) => Some(cursor::parse_since(date).ok_or_else(|| {
+            config_error(format!("--since takes a date as YYYY-MM-DD, not {date:?}"))
+        })?),
+        None => None,
+    };
+    let env = cursor::SyncEnv::from_environment()
+        .ok_or_else(|| config_error("the home directory could not be determined".into()))?;
+    let gdb = tokensave::global_db::GlobalDb::open()
+        .await
+        .ok_or_else(|| tokensave::errors::TokenSaveError::Database {
+            message: "the global database could not be opened".into(),
+            operation: "cursor sync".into(),
+        })?;
+    let options = SyncOptions {
+        since,
+        dry_run,
+        use_login,
+        email,
+    };
+    let report = match cursor::sync(&gdb, &env, &options).await {
+        Ok(SyncOutcome::Synced(report)) => report,
+        Ok(SyncOutcome::NoSource) => {
+            println!("No Cursor usage source is set up; nothing was fetched.");
+            println!(
+                "  Admin API (Teams and Enterprise plans): set {} to a Cursor Admin API key,",
+                cursor::ADMIN_KEY_ENV
+            );
+            println!(
+                "    or save it in {} readable by you only (chmod 600).",
+                env.data_home.join(cursor::ADMIN_KEY_FILE).display()
+            );
+            println!("  Your Cursor login: run `tokensave cursor sync --use-login`. It calls the");
+            println!(
+                "    undocumented endpoint Cursor's dashboard uses; Cursor's terms (section 1.5)"
+            );
+            println!("    restrict extracting data from the service.");
+            return Ok(());
+        }
+        Err(error) => {
+            eprintln!("Cursor sync failed: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let mode = if report.dry_run {
+        " (dry run: nothing written)"
+    } else {
+        ""
+    };
+    println!("Cursor usage sync{mode}");
+    println!("  Source: {}", report.source.label());
+    println!("  From: {}", cursor::window_start_label(report.start));
+    println!(
+        "  Pages: {}, events: {} ({} repeated snapshots folded, {} without a model or time, {} before the window)",
+        format_number(report.pages),
+        format_number(report.events_fetched),
+        format_number(report.snapshots_collapsed),
+        format_number(report.events_skipped),
+        format_number(report.events_before_window)
+    );
+    let verb = if report.dry_run {
+        "to insert"
+    } else {
+        "inserted"
+    };
+    println!(
+        "  Turns {verb}: {}, updated: {}, unchanged: {}",
+        format_number(report.inserted),
+        format_number(report.updated),
+        format_number(report.unchanged)
+    );
+    println!(
+        "  Cost from Cursor: {}, from local prices: {}, unpriced: {}",
+        format_number(report.priced_by_cursor),
+        format_number(report.priced_locally),
+        format_number(report.unpriced)
+    );
+    println!(
+        "  Project found from a local Cursor chat: {} of {}",
+        format_number(report.matched_to_chat),
+        format_number(report.distinct_events)
+    );
+    for (model, (turns, usd)) in &report.per_model {
+        let noun = if *turns == 1 { "turn" } else { "turns" };
+        println!(
+            "    {model:<32} {:>8} {noun:<5}  ${usd:.2}",
+            format_number(*turns)
         );
     }
     Ok(())

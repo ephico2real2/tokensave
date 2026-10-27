@@ -1,0 +1,17 @@
+{
+  "pairs": [
+    {
+      "requested": "claude-fable-5-1",
+      "served": "claude-opus-5-5",
+      "turns": 31,
+      "sessions": 2
+    },
+    {
+      "requested": "claude-opus-5-5",
+      "served": "claude-sonnet-5-5",
+      "turns": 4,
+      "sessions": 1
+    }
+  ],
+  "rate": 0.004
+}

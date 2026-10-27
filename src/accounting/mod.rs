@@ -6,10 +6,14 @@
 //! reports its own billed cost per message), and Factory Droid session
 //! settings, classifies each turn, and stores results in the global database
 //! for fast aggregate queries.
+//!
+//! Cursor keeps no token counts on disk: `tokensave cursor sync` fetches its
+//! usage from Cursor's servers when the user runs it ([`cursor`]).
 
 pub mod backfill;
 pub mod classifier;
 pub(crate) mod codex;
+pub mod cursor;
 pub mod discover;
 mod droid;
 pub mod metrics;

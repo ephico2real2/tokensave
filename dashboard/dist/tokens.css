@@ -1,0 +1,156 @@
+/*
+ * tokensave dashboard colour tokens: the only file with colour values.
+ *
+ * Translated one to one from the two token tables in the mockup
+ * (inkcast docs/tooling/tokensave-dashboard/mockups/source/Main.dc.html, renderVals(): T)
+ * and the design's "Theme and colours" tables. Components read these through var(--token).
+ *
+ * Themes: <html data-theme="dark|light|auto">. Dark is the default, so the dark values also
+ * apply before the page has set data-theme. Auto follows prefers-color-scheme and switches
+ * live when the operating system changes appearance.
+ *
+ * --tint is the share of a category colour in an icon tile over --surface
+ * (12% light, 16% dark; design: "Icon tiles").
+ */
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='auto'] {
+  color-scheme: dark;
+  --bg: #0f1216;
+  --surface: #171b21;
+  --raised: #1d2229;
+  --border: #2a3038;
+  --track: #232831;
+  --control: #3a414b;
+  --text: #e6e8eb;
+  --muted: #a1a9b4;
+  --accent: #93c5fd;
+  --accent-fg: #0f1216;
+  --logo-bg: #2563eb;
+  --logo-fg: #ffffff;
+  --spent: #60a5fa;
+  --saved: #fbbf24;
+  --ok-fg: #86efac;
+  --ok-bg: #12321f;
+  --warn-fg: #fdba74;
+  --warn-bg: #3a2414;
+  --warn-border: #6b3f1d;
+  --info-fg: #bfdbfe;
+  --info-bg: #1b2a4a;
+  --stop-fg: #fca5a5;
+  --stop-bg: #3a1717;
+  --heat-0-bg: #1b2a4a;
+  --heat-0-fg: #e6e8eb;
+  --heat-1-bg: #24407a;
+  --heat-1-fg: #e6e8eb;
+  --heat-2-bg: #3b66d6;
+  --heat-2-fg: #ffffff;
+  --heat-3-bg: #93c5fd;
+  --heat-3-fg: #0f1216;
+  --heat-none-bg: #1d2229;
+  --heat-none-fg: #a1a9b4;
+  --cat-emerald: #10d49a;
+  --cat-sky: #38bdf8;
+  --cat-amber: #e2a717;
+  --cat-violet: #a5adf8;
+  --cat-coral: #f08a6c;
+  --cat-pink: #f472b6;
+  --cat-teal: #2dd4bf;
+  --cat-slate: #94a3b8;
+  --tint: 16%;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --raised: #fafbfc;
+  --border: #e3e5e8;
+  --track: #eef0f3;
+  --control: #cdd1d6;
+  --text: #1a1d21;
+  --muted: #555e6b;
+  --accent: #1d4ed8;
+  --accent-fg: #ffffff;
+  --logo-bg: #1d4ed8;
+  --logo-fg: #ffffff;
+  --spent: #1d4ed8;
+  --saved: #d97706;
+  --ok-fg: #14532d;
+  --ok-bg: #e7f6ec;
+  --warn-fg: #7c2d12;
+  --warn-bg: #fdefe3;
+  --warn-border: #f5c98b;
+  --info-fg: #1e3a8a;
+  --info-bg: #eef2ff;
+  --stop-fg: #7f1d1d;
+  --stop-bg: #fdecec;
+  --heat-0-bg: #e8eefc;
+  --heat-0-fg: #1a1d21;
+  --heat-1-bg: #bfd0f5;
+  --heat-1-fg: #1a1d21;
+  --heat-2-bg: #3b66d6;
+  --heat-2-fg: #ffffff;
+  --heat-3-bg: #1e3a8a;
+  --heat-3-fg: #ffffff;
+  --heat-none-bg: #f6f7f9;
+  --heat-none-fg: #555e6b;
+  --cat-emerald: #059669;
+  --cat-sky: #0284c7;
+  --cat-amber: #a16207;
+  --cat-violet: #6d5df0;
+  --cat-coral: #c2410c;
+  --cat-pink: #db2777;
+  --cat-teal: #0f766e;
+  --cat-slate: #475569;
+  --tint: 12%;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme='auto'] {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --raised: #fafbfc;
+    --border: #e3e5e8;
+    --track: #eef0f3;
+    --control: #cdd1d6;
+    --text: #1a1d21;
+    --muted: #555e6b;
+    --accent: #1d4ed8;
+    --accent-fg: #ffffff;
+    --logo-bg: #1d4ed8;
+    --logo-fg: #ffffff;
+    --spent: #1d4ed8;
+    --saved: #d97706;
+    --ok-fg: #14532d;
+    --ok-bg: #e7f6ec;
+    --warn-fg: #7c2d12;
+    --warn-bg: #fdefe3;
+    --warn-border: #f5c98b;
+    --info-fg: #1e3a8a;
+    --info-bg: #eef2ff;
+    --stop-fg: #7f1d1d;
+    --stop-bg: #fdecec;
+    --heat-0-bg: #e8eefc;
+    --heat-0-fg: #1a1d21;
+    --heat-1-bg: #bfd0f5;
+    --heat-1-fg: #1a1d21;
+    --heat-2-bg: #3b66d6;
+    --heat-2-fg: #ffffff;
+    --heat-3-bg: #1e3a8a;
+    --heat-3-fg: #ffffff;
+    --heat-none-bg: #f6f7f9;
+    --heat-none-fg: #555e6b;
+    --cat-emerald: #059669;
+    --cat-sky: #0284c7;
+    --cat-amber: #a16207;
+    --cat-violet: #6d5df0;
+    --cat-coral: #c2410c;
+    --cat-pink: #db2777;
+    --cat-teal: #0f766e;
+    --cat-slate: #475569;
+    --tint: 12%;
+  }
+}

@@ -51,12 +51,19 @@ Outbound connections are limited to:
 | `github.com` | Download binary during `tokensave upgrade` | None (public releases) | Error shown to user |
 | `tokensave-counter.enzinol.workers.dev` | Aggregate token-saved counter | None | Silently ignored |
 | `raw.githubusercontent.com` | Fetch model pricing from [LiteLLM](https://github.com/BerriAI/litellm) | None (public file) | Falls back to embedded pricing |
+| `api.cursor.com` | `tokensave cursor sync` only: Cursor usage from the Admin API | Cursor Admin API key you provide | Error shown, nothing written |
+| `cursor.com` | `tokensave cursor sync --use-login` only: Cursor usage from the dashboard endpoint | The Cursor app's login token, read from its local `state.vscdb` | Error shown, nothing written |
 
 All best-effort network calls use short timeouts (1-5 seconds) and never block the CLI or MCP server. The pricing fetch (5s timeout) only runs during `tokensave cost` and `tokensave gain` and is cached for 24 hours at `~/.tokensave/pricing.json`.
 
-### No credentials or secrets
+### Credentials
 
-tokensave does not require, store, or transmit any credentials, API keys, tokens, or passwords. All external API calls target public, unauthenticated endpoints.
+tokensave never writes a credential, API key, token or password. Every external call targets a public, unauthenticated endpoint, except `tokensave cursor sync`, which runs only when you run it:
+
+- With a Cursor Admin API key, from `TOKENSAVE_CURSOR_ADMIN_KEY` or a `cursor-admin-key` file in the data folder that must be readable by its owner only, it sends the key to `api.cursor.com` as Basic authentication.
+- With `--use-login` and no key, it reads the Cursor app's access token from the app's `state.vscdb` (opened read only; when the app's `-wal` file is present, SQLite also updates the shared `-shm` index beside it, as every reader does, and changes neither the database nor its `-wal`) and sends it to `cursor.com` as the dashboard's session cookie. The endpoint is undocumented, and Cursor's terms (section 1.5) restrict extracting data from the service.
+
+The credential is held in memory for the run only. It is never printed, logged, written to `global.db` or put in an error message; an error names the source and the HTTP status. No redirect is followed, so the credential goes to the named host only. The endpoints are fixed in a release build.
 
 ### MCP server tools
 
