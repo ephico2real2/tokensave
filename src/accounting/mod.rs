@@ -9,7 +9,7 @@
 
 pub mod backfill;
 pub mod classifier;
-mod codex;
+pub(crate) mod codex;
 pub mod discover;
 mod droid;
 pub mod metrics;

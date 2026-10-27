@@ -862,6 +862,32 @@ A global TUI that shows MCP tool calls from all projects in real time, via a sha
   <img src="src/resources/monitor-screenshot.png" alt="tokensave monitor TUI" width="800">
 </p>
 
+### Dashboard
+
+```bash
+tokensave dashboard start [--port N]   # serve it in the background (--foreground: in this terminal, until Ctrl-C)
+tokensave dashboard status             # whether it runs, with its PID and address
+tokensave dashboard open               # open it in the browser, starting it first if needed
+tokensave dashboard stop
+tokensave dashboard enable [--port N]  # record enabled = true (and the port) in dashboard.toml, and start it
+tokensave dashboard disable            # record enabled = false, and stop it
+```
+
+A local web page of the tokens your agents spent and the tokens tokensave saved, served from `~/.tokensave/global.db` at `http://127.0.0.1:7311/`. There is one dashboard per machine: a second `start` reports the running one (its PID and port), and a port another program holds is refused with its number. The server binds a loopback address only, answers only requests addressed to it by that address or `localhost`, opens `global.db` read only, and never writes it or runs an ingest: its figures are as recent as the last ingest (`tokensave cost`, `status`, `monitor`, or the agent hooks).
+
+Settings live in `~/.tokensave/dashboard.toml`; each has a `TOKENSAVE_DASHBOARD_*` variable that overrides the file, and `--port` overrides both. Without the file the defaults apply.
+
+```toml
+[dashboard]
+enabled = false          # TOKENSAVE_DASHBOARD_ENABLED
+port = 7311              # TOKENSAVE_DASHBOARD_PORT
+bind = "127.0.0.1"       # TOKENSAVE_DASHBOARD_BIND; 127.0.0.1 or ::1, nothing else
+default_range = "30d"    # TOKENSAVE_DASHBOARD_DEFAULT_RANGE; 7d, 30d, 45d, 60d or 90d
+theme = "dark"           # TOKENSAVE_DASHBOARD_THEME; dark, light or auto
+```
+
+The page reads a JSON API under `/api/`: `status`, `summary`, `daily`, `mix`, `runs/top`, `runs`, `roles`, `models`, `thinking`, `fallbacks`, `repos`, `savings` and `sources`. Each takes the window as `range=7|30|45|60|90` or `from`/`to` (`YYYY-MM-DD`, UTC days), and the filters it applies among `repo` (the repo's absolute path), `tool` (`Claude Code`, `Codex`, `Cursor`, `Pi`, `Factory Droid`), `model` and `effort`; a value it cannot use is answered with HTTP 400 naming the parameter. A turn whose model has no price counts in the token figures and is counted in `unpricedTurns`, never as $0. The page itself is embedded from `dashboard/dist/` when the binary is built; a binary built without it answers `/` with 503 "dashboard page not built", and the API works the same.
+
 ### Memory diagnostics
 
 ```bash
@@ -999,6 +1025,7 @@ tokensave uninstall [--agent NAME] # Remove agent integration
 tokensave serve [--idle-timeout-secs N]   # Start MCP server (N: exit after N idle seconds)
 tokensave servers [--json]         # List running servers and the index each one holds
 tokensave monitor                  # Live TUI showing MCP calls across all projects
+tokensave dashboard start|stop|status|open|enable|disable   # Local web dashboard of spend and savings
 tokensave memory [--clean]         # Per-instance RSS report for all tokensave processes
 tokensave upgrade                  # Self-update to latest version
 tokensave channel [stable|beta]    # Show or switch update channel

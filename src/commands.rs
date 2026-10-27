@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::cli::{AccountingAction, BranchAction};
+use crate::cli::{AccountingAction, BranchAction, DashboardAction};
 use crate::global;
 use crate::Spinner;
 use tokensave::config::{discover_project, ProjectDiscovery};
@@ -1577,4 +1577,90 @@ async fn track_current_branch_if_enabled(project_path: &std::path::Path) {
         if_enabled: true,
     })
     .await;
+}
+
+/// `tokensave dashboard ...`. A failure is printed and exits with status 1.
+pub(crate) async fn handle_dashboard(action: DashboardAction) {
+    if let Err(error) = run_dashboard(action).await {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run_dashboard(
+    action: DashboardAction,
+) -> Result<(), tokensave::dashboard::DashboardError> {
+    use tokensave::dashboard::{self, config::DashboardConfig, instance, Started};
+
+    let home = dashboard::data_home()?;
+    let report = |started: &Started| match started {
+        Started::Now(running) => {
+            println!("Dashboard started: {} (PID {})", running.url(), running.pid)
+        }
+        Started::Already(running) => println!(
+            "Dashboard already running: {} (PID {}, port {})",
+            running.url(),
+            running.pid,
+            running.port
+        ),
+    };
+    match action {
+        DashboardAction::Start { port, foreground } => {
+            let config = DashboardConfig::load(&home, port)?;
+            if foreground {
+                let already = dashboard::run_foreground(&home, &config, |running| {
+                    println!(
+                        "Dashboard serving {} (PID {}). Ctrl-C stops it.",
+                        running.url(),
+                        running.pid
+                    );
+                })
+                .await?;
+                if let Some(running) = already {
+                    report(&Started::Already(running));
+                }
+            } else {
+                report(&dashboard::start_background(&home, &config)?);
+            }
+        }
+        DashboardAction::Stop => match dashboard::stop(&home)? {
+            Some(stopped) => println!("Dashboard stopped (PID {}).", stopped.pid),
+            None => println!("Dashboard is not running."),
+        },
+        DashboardAction::Status => match instance::state(&home) {
+            instance::State::Running(running) => println!(
+                "Dashboard running: {} (PID {}, port {})",
+                running.url(),
+                running.pid,
+                running.port
+            ),
+            instance::State::Starting => println!("Dashboard is starting."),
+            instance::State::Stopped => println!("Dashboard is not running."),
+        },
+        DashboardAction::Open => {
+            let config = DashboardConfig::load(&home, None)?;
+            let started = dashboard::start_background(&home, &config)?;
+            if let Started::Now(_) = started {
+                report(&started);
+            }
+            let (Started::Now(running) | Started::Already(running)) = started;
+            dashboard::open_in_browser(&running.url())?;
+            println!("Opened {}", running.url());
+        }
+        DashboardAction::Enable { port } => {
+            let path = dashboard::config::write_enabled(&home, true, port)?;
+            println!("Dashboard enabled in {}", path.display());
+            let config = DashboardConfig::load(&home, None)?;
+            report(&dashboard::start_background(&home, &config)?);
+        }
+        DashboardAction::Disable => {
+            let path = dashboard::config::write_enabled(&home, false, None)?;
+            println!("Dashboard disabled in {}", path.display());
+            match dashboard::stop(&home)? {
+                Some(stopped) => println!("Dashboard stopped (PID {}).", stopped.pid),
+                None => println!("Dashboard is not running."),
+            }
+        }
+    }
+    Ok(())
 }

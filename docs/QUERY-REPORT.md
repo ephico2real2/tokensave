@@ -12,9 +12,9 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 ## Inventory summary
 
-- SQL-bearing source files: **40**.
-- SQL literal/template occurrences: **392**.
-- Functions retained for construction/binding context: **178**.
+- SQL-bearing source files: **42**.
+- SQL literal/template occurrences: **414**.
+- Functions retained for construction/binding context: **179**.
 
 ## Source file index
 
@@ -27,6 +27,8 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 | [src/agents/mod.rs](../src/agents/mod.rs) | 1 |
 | [src/blame_engine.rs](../src/blame_engine.rs) | 16 |
 | [src/branch.rs](../src/branch.rs) | 2 |
+| [src/dashboard/api.rs](../src/dashboard/api.rs) | 2 |
+| [src/dashboard/sql.rs](../src/dashboard/sql.rs) | 20 |
 | [src/db/connection.rs](../src/db/connection.rs) | 11 |
 | [src/db/migrations.rs](../src/db/migrations.rs) | 53 |
 | [src/db/queries/clear.rs](../src/db/queries/clear.rs) | 1 |
@@ -391,6 +393,443 @@ Source: [src/branch.rs:94](../src/branch.rs#L94).
 
 ```sql
 PRAGMA wal_checkpoint(TRUNCATE);
+```
+
+### src/dashboard/api.rs
+
+#### Q0403 — `open_read_only`
+
+Source: [src/dashboard/api.rs:113](../src/dashboard/api.rs#L113).
+
+```sql
+PRAGMA query_only = 1; PRAGMA busy_timeout = 5000;
+```
+
+#### Q0404 — `open_read_only`
+
+Source: [src/dashboard/api.rs:117](../src/dashboard/api.rs#L117).
+
+```sql
+PRAGMA user_version
+```
+
+### src/dashboard/sql.rs
+
+#### Q0405 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:13](../src/dashboard/sql.rs#L13).
+
+```sql
+SELECT path FROM projects ORDER BY path
+```
+
+#### Q0406 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:16](../src/dashboard/sql.rs#L16).
+
+```sql
+SELECT t.spent, t.cost, t.unpriced, s.saved,
+                COALESCE(s.saved * 1.0 / NULLIF(t.spent + s.saved, 0), 0.0),
+                COALESCE(t.cache_read * 1.0 / NULLIF(t.prompt, 0), 0.0)
+           FROM (SELECT COALESCE(SUM(input_tokens + output_tokens + cache_write_tokens + cache_read_tokens), 0) AS spent,
+                        COALESCE(SUM(cost_usd), 0.0) AS cost,
+                        COUNT(*) - COUNT(cost_usd) AS unpriced,
+                        COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
+                        COALESCE(SUM(input_tokens + cache_write_tokens + cache_read_tokens), 0) AS prompt
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')) AS t,
+                (SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0) AS saved
+                   FROM savings_ledger
+                  WHERE ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7)) AS s
+```
+
+#### Q0407 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:36](../src/dashboard/sql.rs#L36).
+
+```sql
+WITH RECURSIVE days(day) AS (
+                 SELECT date(?1, 'unixepoch')
+                 UNION ALL
+                 SELECT date(day, '+1 day') FROM days WHERE day < date(?2 - 86400, 'unixepoch')
+             ),
+             spent(day, tokens) AS (
+                 SELECT date(timestamp, 'unixepoch'),
+                        SUM(input_tokens + output_tokens + cache_write_tokens + cache_read_tokens)
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+                  GROUP BY 1
+             ),
+             saved(day, tokens) AS (
+                 SELECT date(ts, 'unixepoch'),
+                        SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END)
+                   FROM savings_ledger
+                  WHERE ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7)
+                  GROUP BY 1
+             )
+         SELECT days.day, COALESCE(spent.tokens, 0), COALESCE(saved.tokens, 0)
+           FROM days
+           LEFT JOIN spent ON spent.day = days.day
+           LEFT JOIN saved ON saved.day = days.day
+          ORDER BY days.day
+```
+
+#### Q0408 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:67](../src/dashboard/sql.rs#L67).
+
+```sql
+SELECT agent, SUM(tokens), COALESCE(SUM(tokens) * 1.0 / NULLIF(SUM(SUM(tokens)) OVER (), 0), 0.0)
+           FROM (SELECT agent, input_tokens + output_tokens + cache_write_tokens + cache_read_tokens AS tokens
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid'))
+          GROUP BY agent
+          ORDER BY 2 DESC, agent
+```
+
+#### Q0409 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:80](../src/dashboard/sql.rs#L80).
+
+```sql
+SELECT model, SUM(tokens), COALESCE(SUM(tokens) * 1.0 / NULLIF(SUM(SUM(tokens)) OVER (), 0), 0.0)
+           FROM (SELECT model, input_tokens + output_tokens + cache_write_tokens + cache_read_tokens AS tokens
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid'))
+          GROUP BY model
+          ORDER BY 2 DESC, model
+```
+
+#### Q0410 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:93](../src/dashboard/sql.rs#L93).
+
+```sql
+WITH f AS (
+                 SELECT COALESCE(run_id, session_id) AS rk, run_id, session_id, project_hash, agent, model,
+                        CASE WHEN effort IN ('low', 'medium', 'high', 'xhigh', 'max') THEN effort END AS effort,
+                        input_tokens + cache_write_tokens + cache_read_tokens AS prompt, output_tokens, cost_usd
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+             ),
+             r AS (
+                 SELECT rk, MAX(run_id) AS run_id, MIN(session_id) AS session_id,
+                        MIN(project_hash) AS project_hash, MIN(agent) AS agent,
+                        SUM(prompt) AS prompt, SUM(output_tokens) AS output,
+                        CASE WHEN COUNT(cost_usd) = COUNT(*) THEN SUM(cost_usd) END AS cost,
+                        COALESCE(SUM(cost_usd), 0.0) AS priced
+                   FROM f
+                  GROUP BY rk
+             ),
+             d AS (
+                 SELECT rk, model, effort,
+                        ROW_NUMBER() OVER (PARTITION BY rk ORDER BY SUM(prompt + output_tokens) DESC, model, effort) AS n
+                   FROM f
+                  GROUP BY rk, model, effort
+             ),
+             seen AS (
+                 SELECT COALESCE(run_id, session_id) AS rk, MAX(timestamp) AS last
+                   FROM turns
+                  WHERE timestamp >= ?1
+                  GROUP BY 1
+             ),
+             runs AS (
+                 SELECT r.rk, r.run_id, r.project_hash, r.agent, r.prompt, r.output, r.cost, r.priced,
+                        d.model, d.effort,
+                        COALESCE(a.parent_run_id, a.session_id,
+                                 CASE WHEN r.run_id IS NOT NULL AND r.session_id <> 'agent-' || r.run_id
+                                      THEN r.session_id END) AS parent,
+                        COALESCE(a.description, a.role) AS label,
+                        CASE WHEN r.run_id IS NULL THEN 'main'
+                             WHEN a.role = 'Explore' THEN 'Explore'
+                             WHEN lower(a.role) IN ('builder', 'reviewer') THEN lower(a.role)
+                             WHEN lower(a.description) LIKE '%review%' THEN 'reviewer'
+                             WHEN lower(a.description) LIKE '%build%'
+                               OR lower(a.description) LIKE '%implement%' THEN 'builder'
+                             ELSE 'other' END AS role,
+                        CASE WHEN r.run_id IS NOT NULL AND a.finished = 1 THEN 'finished'
+                             WHEN seen.last >= ?9 THEN 'running'
+                             WHEN r.run_id IS NULL THEN 'finished'
+                             ELSE 'partial' END AS state
+                   FROM r
+                   JOIN d ON d.rk = r.rk AND d.n = 1
+                   JOIN seen ON seen.rk = r.rk
+                   LEFT JOIN agent_runs AS a ON a.run_id = r.run_id
+             )
+         SELECT rk, parent, label, role, agent, model, effort, prompt, output, cost, project_hash, state
+           FROM runs
+          ORDER BY priced DESC, prompt + output DESC, rk
+          LIMIT ?8
+```
+
+#### Q0411 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:155](../src/dashboard/sql.rs#L155).
+
+```sql
+WITH f AS (
+                 SELECT COALESCE(run_id, session_id) AS rk, run_id, session_id, project_hash, agent, model,
+                        CASE WHEN effort IN ('low', 'medium', 'high', 'xhigh', 'max') THEN effort END AS effort,
+                        input_tokens + cache_write_tokens + cache_read_tokens AS prompt, output_tokens, cost_usd
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+             ),
+             r AS (
+                 SELECT rk, MAX(run_id) AS run_id, MIN(session_id) AS session_id,
+                        MIN(project_hash) AS project_hash, MIN(agent) AS agent,
+                        SUM(prompt) AS prompt, SUM(output_tokens) AS output,
+                        CASE WHEN COUNT(cost_usd) = COUNT(*) THEN SUM(cost_usd) END AS cost,
+                        COALESCE(SUM(cost_usd), 0.0) AS priced
+                   FROM f
+                  GROUP BY rk
+             ),
+             d AS (
+                 SELECT rk, model, effort,
+                        ROW_NUMBER() OVER (PARTITION BY rk ORDER BY SUM(prompt + output_tokens) DESC, model, effort) AS n
+                   FROM f
+                  GROUP BY rk, model, effort
+             ),
+             seen AS (
+                 SELECT COALESCE(run_id, session_id) AS rk, MAX(timestamp) AS last
+                   FROM turns
+                  WHERE timestamp >= ?1
+                  GROUP BY 1
+             ),
+             runs AS (
+                 SELECT r.rk, r.run_id, r.project_hash, r.agent, r.prompt, r.output, r.cost, r.priced,
+                        d.model, d.effort,
+                        COALESCE(a.parent_run_id, a.session_id,
+                                 CASE WHEN r.run_id IS NOT NULL AND r.session_id <> 'agent-' || r.run_id
+                                      THEN r.session_id END) AS parent,
+                        COALESCE(a.description, a.role) AS label,
+                        CASE WHEN r.run_id IS NULL THEN 'main'
+                             WHEN a.role = 'Explore' THEN 'Explore'
+                             WHEN lower(a.role) IN ('builder', 'reviewer') THEN lower(a.role)
+                             WHEN lower(a.description) LIKE '%review%' THEN 'reviewer'
+                             WHEN lower(a.description) LIKE '%build%'
+                               OR lower(a.description) LIKE '%implement%' THEN 'builder'
+                             ELSE 'other' END AS role,
+                        CASE WHEN r.run_id IS NOT NULL AND a.finished = 1 THEN 'finished'
+                             WHEN seen.last >= ?9 THEN 'running'
+                             WHEN r.run_id IS NULL THEN 'finished'
+                             ELSE 'partial' END AS state
+                   FROM r
+                   JOIN d ON d.rk = r.rk AND d.n = 1
+                   JOIN seen ON seen.rk = r.rk
+                   LEFT JOIN agent_runs AS a ON a.run_id = r.run_id
+             )
+         SELECT role, SUM(priced),
+                COALESCE(SUM(priced) / NULLIF(SUM(SUM(priced)) OVER (), 0), 0.0),
+                COALESCE(SUM(SUM(CASE WHEN role <> 'main' THEN priced ELSE 0.0 END)) OVER ()
+                         / NULLIF(SUM(SUM(priced)) OVER (), 0), 0.0),
+                SUM(SUM(role <> 'main' AND state <> 'finished')) OVER ()
+           FROM runs
+          GROUP BY role
+          ORDER BY 2 DESC, role
+```
+
+#### Q0412 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:222](../src/dashboard/sql.rs#L222).
+
+```sql
+SELECT model, effort, CASE WHEN COUNT(cost_usd) = COUNT(*) THEN SUM(cost_usd) END
+           FROM turns
+          WHERE timestamp >= ?1 AND timestamp < ?2
+            AND (?3 IS NULL OR project_hash = ?3)
+            AND (?4 IS NULL OR agent = ?4)
+            AND (?5 IS NULL OR model = ?5)
+            AND (?6 IS NULL OR effort = ?6)
+            AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+            AND effort IN ('low', 'medium', 'high', 'xhigh', 'max')
+          GROUP BY model, effort
+          ORDER BY SUM(COALESCE(SUM(cost_usd), 0.0)) OVER (PARTITION BY model) DESC, model
+```
+
+#### Q0413 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:235](../src/dashboard/sql.rs#L235).
+
+```sql
+SELECT model, CASE WHEN effort IN ('low', 'medium', 'high', 'xhigh', 'max') THEN effort END AS level,
+                SUM(thinking_tokens) * 1.0 / SUM(output_tokens)
+           FROM turns
+          WHERE timestamp >= ?1 AND timestamp < ?2
+            AND (?3 IS NULL OR project_hash = ?3)
+            AND (?4 IS NULL OR agent = ?4)
+            AND (?5 IS NULL OR model = ?5)
+            AND (?6 IS NULL OR effort = ?6)
+            AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+            AND thinking_tokens IS NOT NULL
+          GROUP BY model, level
+         HAVING SUM(output_tokens) > 0
+          ORDER BY 3 DESC, model, level
+```
+
+#### Q0414 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:250](../src/dashboard/sql.rs#L250).
+
+```sql
+WITH f AS (
+                 SELECT session_id, model,
+                        CASE WHEN instr(requested_model, '[') > 0
+                             THEN substr(requested_model, 1, instr(requested_model, '[') - 1)
+                             ELSE requested_model END AS requested
+                   FROM turns
+                  WHERE timestamp >= ?1 AND timestamp < ?2
+                    AND (?3 IS NULL OR project_hash = ?3)
+                    AND (?4 IS NULL OR agent = ?4)
+                    AND (?5 IS NULL OR model = ?5)
+                    AND (?6 IS NULL OR effort = ?6)
+                    AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+                    AND requested_model IS NOT NULL
+             )
+         SELECT requested, model, COUNT(*), COUNT(DISTINCT session_id),
+                (SELECT SUM(requested <> model) * 1.0 / COUNT(*) FROM f)
+           FROM f
+          WHERE requested <> model
+          GROUP BY requested, model
+          ORDER BY 3 DESC, requested, model
+```
+
+#### Q0415 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:272](../src/dashboard/sql.rs#L272).
+
+```sql
+SELECT project_hash, SUM(input_tokens + output_tokens + cache_write_tokens + cache_read_tokens),
+                group_concat(DISTINCT agent)
+           FROM turns
+          WHERE timestamp >= ?1 AND timestamp < ?2
+            AND (?3 IS NULL OR project_hash = ?3)
+            AND (?4 IS NULL OR agent = ?4)
+            AND (?5 IS NULL OR model = ?5)
+            AND (?6 IS NULL OR effort = ?6)
+            AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+          GROUP BY project_hash
+```
+
+#### Q0416 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:284](../src/dashboard/sql.rs#L284).
+
+```sql
+SELECT project_path,
+                SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END)
+           FROM savings_ledger
+          WHERE ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7)
+          GROUP BY project_path
+```
+
+#### Q0417 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:292](../src/dashboard/sql.rs#L292).
+
+```sql
+SELECT project_hash, MAX(timestamp) FROM turns GROUP BY project_hash
+```
+
+#### Q0418 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:296](../src/dashboard/sql.rs#L296).
+
+```sql
+SELECT project_path, MAX(ts) FROM savings_ledger GROUP BY project_path
+```
+
+#### Q0419 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:299](../src/dashboard/sql.rs#L299).
+
+```sql
+SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0),
+                COALESCE(SUM(before_tokens), 0), COALESCE(SUM(after_tokens), 0), COUNT(*)
+           FROM savings_ledger
+          WHERE ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7)
+```
+
+#### Q0420 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:305](../src/dashboard/sql.rs#L305).
+
+```sql
+SELECT tool_name, SUM(saved),
+                COALESCE(SUM(saved) * 1.0 / NULLIF(SUM(SUM(saved)) OVER (), 0), 0.0)
+           FROM (SELECT tool_name,
+                        CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END AS saved
+                   FROM savings_ledger
+                  WHERE ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7))
+          GROUP BY tool_name
+          ORDER BY 2 DESC, tool_name
+```
+
+#### Q0421 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:315](../src/dashboard/sql.rs#L315).
+
+```sql
+SELECT tool_names, tool_result_tokens
+           FROM turns
+          WHERE timestamp >= ?1 AND timestamp < ?2
+            AND (?3 IS NULL OR project_hash = ?3)
+            AND agent = 'claude'
+```
+
+#### Q0422 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:323](../src/dashboard/sql.rs#L323).
+
+```sql
+SELECT agent, COUNT(*), strftime('%Y-%m-%dT%H:%M:%SZ', MAX(timestamp), 'unixepoch')
+           FROM turns
+          GROUP BY agent
+```
+
+#### Q0423 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:332](../src/dashboard/sql.rs#L332).
+
+```sql
+timestamp >= ?1 AND timestamp < ?2 AND (?3 IS NULL OR project_hash = ?3) AND (?4 IS NULL OR agent = ?4) AND (?5 IS NULL OR model = ?5) AND (?6 IS NULL OR effort = ?6) AND agent IN ('claude', 'codex', 'cursor', 'pi', 'droid')
+```
+
+#### Q0424 — `module constant / top-level string`
+
+Source: [src/dashboard/sql.rs:336](../src/dashboard/sql.rs#L336).
+
+```sql
+ts >= ?1 AND ts < ?2 AND (?7 IS NULL OR project_path = ?7)
 ```
 
 ### src/db/connection.rs
@@ -5012,6 +5451,50 @@ pub async fn copy_branch_db(parent_db: &Path, new_db_path: &Path) -> crate::erro
         std::fs::copy(&parent_wal, wal_sidecar(new_db_path))?;
     }
     Ok(())
+}
+```
+
+### `open_read_only` — src/dashboard/api.rs:97
+
+Source: [src/dashboard/api.rs:97](../src/dashboard/api.rs#L97).
+
+```rust
+pub async fn open_read_only(path: &Path) -> Result<ReadOnlyDb, ApiError> {
+    if !path.is_file() {
+        return Err(ApiError::unavailable(format!(
+            "no usage is recorded yet: {} does not exist",
+            path.display()
+        )));
+    }
+    let unavailable = |error: libsql::Error| {
+        ApiError::unavailable(format!("cannot open {}: {error}", path.display()))
+    };
+    let db = libsql::Builder::new_local(path)
+        .flags(libsql::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .build()
+        .await
+        .map_err(unavailable)?;
+    let conn = db.connect().map_err(unavailable)?;
+    conn.execute_batch("PRAGMA query_only = 1; PRAGMA busy_timeout = 5000;")
+        .await
+        .map_err(unavailable)?;
+    let mut rows = conn
+        .query("PRAGMA user_version", ())
+        .await
+        .map_err(unavailable)?;
+    let version = match rows.next().await.map_err(unavailable)? {
+        Some(row) => row.get::<i64>(0).map_err(unavailable)?,
+        None => 0,
+    };
+    let latest = i64::from(crate::global_db::SCHEMA_VERSION);
+    if version < latest {
+        return Err(ApiError::unavailable(format!(
+            "{} is at schema version {version}, older than this tokensave reads ({latest}); \
+             run `tokensave cost` once to upgrade it",
+            path.display()
+        )));
+    }
+    Ok(ReadOnlyDb { conn, _db: db })
 }
 ```
 

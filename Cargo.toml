@@ -143,6 +143,12 @@ yaml-rust2 = "0.10"
 ureq = { version = "3", features = ["json", "platform-verifier"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
+# The dashboard's local HTTP server (inkcast #264). hyper 1 is maintained; the
+# hyper 0.14 that libsql already pulls in has had no release since 2024-12.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+percent-encoding = "2"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -26,6 +26,7 @@ pub mod cloud;
 pub mod config;
 pub mod context;
 pub mod cpu;
+pub mod dashboard;
 pub mod data_home;
 pub mod db;
 pub mod derive_table;

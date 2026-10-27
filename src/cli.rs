@@ -426,6 +426,16 @@ pub enum Commands {
     },
     /// Live token savings monitor (global, all projects)
     Monitor,
+    /// Local web dashboard of agent token spend and tokensave savings
+    ///
+    /// Serves the page and its API on a loopback port (7311 by default),
+    /// one per machine, reading ~/.tokensave/global.db read only. Settings
+    /// live in ~/.tokensave/dashboard.toml; TOKENSAVE_DASHBOARD_* variables
+    /// override them.
+    Dashboard {
+        #[command(subcommand)]
+        action: DashboardAction,
+    },
     /// Report memory usage of all tokensave instances on this machine (#253 diagnostics)
     Memory {
         /// Purge slots left behind by dead processes
@@ -600,6 +610,33 @@ pub enum AccountingAction {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum DashboardAction {
+    /// Start the dashboard, in the background unless --foreground
+    Start {
+        /// Port to serve on (default: `port` in dashboard.toml, else 7311)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Serve from this process until Ctrl-C instead of in the background
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Stop the running dashboard
+    Stop,
+    /// Say whether the dashboard runs, with its PID and address
+    Status,
+    /// Open the dashboard in the browser, starting it first if needed
+    Open,
+    /// Switch the dashboard on in dashboard.toml and start it
+    Enable {
+        /// Port to serve on, saved in dashboard.toml
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Switch the dashboard off in dashboard.toml and stop it
+    Disable,
 }
 
 #[derive(Subcommand)]

@@ -30,6 +30,9 @@ const EXTERNAL_ENV_VARS: &[&str] = &[
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
+    // Cargo's output folder for build scripts; build.rs writes the embedded
+    // dashboard file list there (inkcast #264).
+    "OUT_DIR",
 ];
 const EXTERNAL_PREFIXES: &[&str] = &["CARGO_"];
 const LEGACY_TOKENSAVE_ENV_VARS: &[&str] = &["DISABLE_TOKENSAVE"];

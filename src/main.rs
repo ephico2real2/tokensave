@@ -1946,6 +1946,9 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
         } => {
             commands::handle_gain(all, history, &range, json).await?;
         }
+        Commands::Dashboard { action } => {
+            commands::handle_dashboard(action).await;
+        }
         Commands::Monitor => {
             if let Err(e) = tokensave::monitor::run() {
                 eprintln!("Monitor error: {e}");
@@ -2039,6 +2042,10 @@ fn should_skip_agent_install_maintenance(command: &Commands) -> bool {
             // network flush and a scan over every tracked agent do not belong
             // behind a directory listing that a UI refreshes on a timer.
             | Commands::Servers { .. }
+            // The dashboard is a long-lived server, and `dashboard start`
+            // runs it as a second process: neither needs the network flush
+            // or the agent scans, which the next interactive command runs.
+            | Commands::Dashboard { .. }
             // Hook handlers are on the per-tool-call hot path (Cursor fires
             // `preToolUse` before every Grep/Shell; Factory Droid fires
             // `hook-droid-pre-tool-use` before every Execute/Grep). They must

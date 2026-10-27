@@ -391,6 +391,15 @@ whose model had no price, rebuilding the table since SQLite cannot drop a
 next ingest prices those whose model has a price by then
 (`GlobalDb::price_unpriced_turns`). A shipped migration is never edited; a
 schema change is a new migration at the end of the list.
+
+The dashboard (`tokensave dashboard`, `src/dashboard/`) is a reader of
+`global.db` only. Each API request opens it with `SQLITE_OPEN_READ_ONLY` and
+`PRAGMA query_only = 1`, refuses a database older than `SCHEMA_VERSION` or
+missing (503, nothing created), and computes every figure in one of the
+statements in `src/dashboard/sql.rs`, which share one filter clause per table
+(checked word for word by that module's tests). It never runs an ingest, so it
+shows what the last ingest recorded. One server runs per machine, held by an OS
+file lock (`dashboard.lock`) for its life, and it binds a loopback address only.
 An opt-in worldwide counter (Cloudflare Worker) lets users contribute their totals
 anonymously. Upload is best-effort with 2-second timeouts and never blocks the CLI.
 
