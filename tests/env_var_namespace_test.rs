@@ -14,6 +14,7 @@ const EXTERNAL_ENV_VARS: &[&str] = &[
     "XDG_CONFIG_HOME",
     // Agent-owned configuration.
     "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
     "KIRO_HOME",
     "PI_CODING_AGENT_DIR",
     "VIBE_HOME",

@@ -12,8 +12,8 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 ## Inventory summary
 
-- SQL-bearing source files: **39**.
-- SQL literal/template occurrences: **389**.
+- SQL-bearing source files: **40**.
+- SQL literal/template occurrences: **392**.
 - Functions retained for construction/binding context: **178**.
 
 ## Source file index
@@ -21,6 +21,7 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 | Source file | SQL occurrences |
 | --- | ---: |
 | [src/accounting/backfill.rs](../src/accounting/backfill.rs) | 4 |
+| [src/accounting/codex.rs](../src/accounting/codex.rs) | 3 |
 | [src/accounting/parser.rs](../src/accounting/parser.rs) | 9 |
 | [src/agents/hooks.rs](../src/agents/hooks.rs) | 4 |
 | [src/agents/mod.rs](../src/agents/mod.rs) | 1 |
@@ -98,11 +99,37 @@ Source: [src/accounting/backfill.rs:378](../src/accounting/backfill.rs#L378).
 PRAGMA user_version = {newer}
 ```
 
+### src/accounting/codex.rs
+
+#### Q0393 — `stored`
+
+Source: [src/accounting/codex.rs:455](../src/accounting/codex.rs#L455).
+
+```sql
+SELECT * FROM turns WHERE agent = 'codex' ORDER BY message_id
+```
+
+#### Q0394 — `stored`
+
+Source: [src/accounting/codex.rs:456](../src/accounting/codex.rs#L456).
+
+```sql
+SELECT * FROM agent_runs ORDER BY run_id
+```
+
+#### Q0395 — `stored_cost`
+
+Source: [src/accounting/codex.rs:476](../src/accounting/codex.rs#L476).
+
+```sql
+SELECT cost_usd FROM turns WHERE message_id = ?1
+```
+
 ### src/accounting/parser.rs
 
 #### Q0356 — `a_run_that_failed_to_record_is_retried`
 
-Source: [src/accounting/parser.rs:1110](../src/accounting/parser.rs#L1110).
+Source: [src/accounting/parser.rs:1177](../src/accounting/parser.rs#L1177).
 
 ```sql
 ALTER TABLE agent_runs RENAME TO agent_runs_away
@@ -110,7 +137,7 @@ ALTER TABLE agent_runs RENAME TO agent_runs_away
 
 #### Q0377 — `a_run_that_failed_to_record_is_retried`
 
-Source: [src/accounting/parser.rs:1117](../src/accounting/parser.rs#L1117).
+Source: [src/accounting/parser.rs:1184](../src/accounting/parser.rs#L1184).
 
 ```sql
 ALTER TABLE agent_runs_away RENAME TO agent_runs
@@ -118,7 +145,7 @@ ALTER TABLE agent_runs_away RENAME TO agent_runs
 
 #### Q0361 — `stored_turn`
 
-Source: [src/accounting/parser.rs:1186](../src/accounting/parser.rs#L1186).
+Source: [src/accounting/parser.rs:1253](../src/accounting/parser.rs#L1253).
 
 ```sql
 SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
@@ -128,7 +155,7 @@ SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
 
 #### Q0392 — `an_ingest_prices_a_turn_whose_model_gained_a_price`
 
-Source: [src/accounting/parser.rs:1333](../src/accounting/parser.rs#L1333).
+Source: [src/accounting/parser.rs:1400](../src/accounting/parser.rs#L1400).
 
 ```sql
 UPDATE turns SET cost_usd = NULL
@@ -136,7 +163,7 @@ UPDATE turns SET cost_usd = NULL
 
 #### Q0362 — `a_transcript_read_twice_changes_no_turn`
 
-Source: [src/accounting/parser.rs:1375](../src/accounting/parser.rs#L1375).
+Source: [src/accounting/parser.rs:1442](../src/accounting/parser.rs#L1442).
 
 ```sql
 DELETE FROM parse_offsets
@@ -144,7 +171,7 @@ DELETE FROM parse_offsets
 
 #### Q0363 — `turn_after_two_reads`
 
-Source: [src/accounting/parser.rs:1463](../src/accounting/parser.rs#L1463).
+Source: [src/accounting/parser.rs:1530](../src/accounting/parser.rs#L1530).
 
 ```sql
 DELETE FROM parse_offsets
@@ -152,7 +179,7 @@ DELETE FROM parse_offsets
 
 #### Q0365 — `a_turn_recorded_before_result_ids_is_added_to_only_while_empty`
 
-Source: [src/accounting/parser.rs:1542](../src/accounting/parser.rs#L1542).
+Source: [src/accounting/parser.rs:1609](../src/accounting/parser.rs#L1609).
 
 ```sql
 UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'
@@ -160,7 +187,7 @@ UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'
 
 #### Q0366 — `recorded`
 
-Source: [src/accounting/parser.rs:1571](../src/accounting/parser.rs#L1571).
+Source: [src/accounting/parser.rs:1638](../src/accounting/parser.rs#L1638).
 
 ```sql
 SELECT message_id FROM turns ORDER BY message_id
@@ -168,7 +195,7 @@ SELECT message_id FROM turns ORDER BY message_id
 
 #### Q0378 — `a_database_newer_than_the_binary_is_not_ingested_into`
 
-Source: [src/accounting/parser.rs:1707](../src/accounting/parser.rs#L1707).
+Source: [src/accounting/parser.rs:1774](../src/accounting/parser.rs#L1774).
 
 ```sql
 PRAGMA user_version = {}
@@ -3428,7 +3455,7 @@ Source: [src/global_db.rs:984](../src/global_db.rs#L984).
 
 ```sql
 SELECT DISTINCT model FROM turns
-                     WHERE cost_usd IS NULL AND agent = 'claude'
+                     WHERE cost_usd IS NULL AND agent IN ('claude', 'codex')
 ```
 
 #### Q0386 — `price_unpriced_turns`
@@ -3441,7 +3468,7 @@ UPDATE turns SET cost_usd =
                          + (output_tokens / 1000000.0) * ?3
                          + (cache_write_tokens / 1000000.0) * ?4
                          + (cache_read_tokens / 1000000.0) * ?5
-                     WHERE model = ?1 AND agent = 'claude' AND cost_usd IS NULL
+                     WHERE model = ?1 AND agent IN ('claude', 'codex') AND cost_usd IS NULL
 ```
 
 #### Q0353 — `upsert_agent_run`
@@ -4542,9 +4569,9 @@ Source: [src/accounting/backfill.rs:371](../src/accounting/backfill.rs#L371).
     }
 ```
 
-### `a_database_newer_than_the_binary_is_not_ingested_into` — src/accounting/parser.rs:1699
+### `a_database_newer_than_the_binary_is_not_ingested_into` — src/accounting/parser.rs:1766
 
-Source: [src/accounting/parser.rs:1699](../src/accounting/parser.rs#L1699).
+Source: [src/accounting/parser.rs:1766](../src/accounting/parser.rs#L1766).
 
 ```rust
     async fn a_database_newer_than_the_binary_is_not_ingested_into() {

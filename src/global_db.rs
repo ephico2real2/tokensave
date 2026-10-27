@@ -964,10 +964,10 @@ impl GlobalDb {
         Some(changed)
     }
 
-    /// Prices the Claude turns recorded with no price (`cost_usd IS NULL`)
-    /// whose model `price` now prices, from the tokens each row holds: one
-    /// `UPDATE` per model, all in one `BEGIN IMMEDIATE` transaction. A priced
-    /// row is never changed. Returns the rows priced, or `None` on a database
+    /// Prices the Claude Code and Codex turns recorded with no price
+    /// (`cost_usd IS NULL`) whose model `price` now prices, from the tokens
+    /// each row holds: one `UPDATE` per model, all in one `BEGIN IMMEDIATE`
+    /// transaction. A priced row is never changed. Returns the rows priced, or `None` on a database
     /// error (inkcast #252).
     ///
     /// The models are read first without a lock: most ingests find none that
@@ -982,7 +982,7 @@ impl GlobalDb {
                 .conn
                 .query(
                     "SELECT DISTINCT model FROM turns
-                     WHERE cost_usd IS NULL AND agent = 'claude'",
+                     WHERE cost_usd IS NULL AND agent IN ('claude', 'codex')",
                     (),
                 )
                 .await
@@ -1013,7 +1013,7 @@ impl GlobalDb {
                          + (output_tokens / 1000000.0) * ?3
                          + (cache_write_tokens / 1000000.0) * ?4
                          + (cache_read_tokens / 1000000.0) * ?5
-                     WHERE model = ?1 AND agent = 'claude' AND cost_usd IS NULL",
+                     WHERE model = ?1 AND agent IN ('claude', 'codex') AND cost_usd IS NULL",
                     params![
                         model.as_str(),
                         pricing.input_per_mtok,

@@ -1,13 +1,15 @@
 //! Token accounting: cost observability from agent session transcripts.
 //!
 //! Parses `~/.claude/projects/**/*.jsonl` (Claude Code, priced from the
-//! embedded model table), `~/.pi/agent/sessions/**/*.jsonl` (Pi, which
+//! embedded model table), `$CODEX_HOME/sessions/**/rollout-*.jsonl` (Codex
+//! CLI, priced the same way), `~/.pi/agent/sessions/**/*.jsonl` (Pi, which
 //! reports its own billed cost per message), and Factory Droid session
 //! settings, classifies each turn, and stores results in the global database
 //! for fast aggregate queries.
 
 pub mod backfill;
 pub mod classifier;
+mod codex;
 pub mod discover;
 mod droid;
 pub mod metrics;

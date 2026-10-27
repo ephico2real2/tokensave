@@ -445,6 +445,10 @@ pub struct IngestStats {
     pub turns_priced: u64,
     /// Total input + output tokens of newly-inserted Claude turns.
     pub tokens_consumed: u64,
+    /// Complete Codex lines that are not JSON, skipped.
+    pub lines_unparseable: u64,
+    /// Codex session files left unread: compressed (`.jsonl.zst`).
+    pub files_unread: u64,
     /// Per-source coverage information.
     pub coverage: Vec<SourceCoverage>,
 }
@@ -459,6 +463,8 @@ impl IngestStats {
             unpriced_turns: 0,
             turns_priced: 0,
             tokens_consumed: 0,
+            lines_unparseable: 0,
+            files_unread: 0,
             coverage: Vec::new(),
         }
     }
@@ -634,6 +640,8 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
         unpriced_turns: unpriced,
         turns_priced,
         tokens_consumed: total_tokens,
+        lines_unparseable: 0,
+        files_unread: 0,
         coverage: vec![SourceCoverage {
             agent: "claude",
             state: claude_state,
@@ -642,9 +650,17 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
     }
 }
 
-/// Ingest Claude sessions from `home` and Droid sessions from
-/// `home/.factory/sessions`.  Returns combined [`IngestStats`].
+/// Ingest Claude sessions from `home`, Droid sessions from
+/// `home/.factory/sessions`, Pi sessions, and Codex sessions from
+/// `home/.codex/sessions`.  Returns combined [`IngestStats`].
+#[cfg(test)]
 pub(crate) async fn ingest_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
+    ingest_sources(gdb, home, &home.join(".codex")).await
+}
+
+/// Ingest every source below `home`, with Codex's data folder given:
+/// `$CODEX_HOME` when the real home is ingested, `home/.codex` in tests.
+async fn ingest_sources(gdb: &GlobalDb, home: &Path, codex_home: &Path) -> IngestStats {
     // A database newer than this binary is read only (inkcast #248).
     if gdb.newer_schema().is_some() {
         return IngestStats::empty();
@@ -664,6 +680,15 @@ pub(crate) async fn ingest_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats
     stats.unpriced_turns += pi.unpriced_turns;
     stats.tokens_consumed += pi.tokens_consumed;
     stats.coverage.extend(pi.coverage);
+
+    let codex = crate::accounting::codex::ingest_dir(gdb, &codex_home.join("sessions")).await;
+    stats.turns_inserted += codex.turns_inserted;
+    stats.cost_usd += codex.cost_usd;
+    stats.unpriced_turns += codex.unpriced_turns;
+    stats.tokens_consumed += codex.tokens_consumed;
+    stats.lines_unparseable += codex.lines_unparseable;
+    stats.files_unread += codex.compressed_skipped;
+    stats.coverage.push(codex.coverage);
 
     stats
 }
@@ -685,6 +710,8 @@ async fn ingest_pi_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
         unpriced_turns: 0,
         turns_priced: 0,
         tokens_consumed: pi.tokens_consumed,
+        lines_unparseable: 0,
+        files_unread: 0,
         coverage: vec![pi.coverage],
     }
 }
@@ -718,7 +745,11 @@ pub async fn ingest(gdb: &GlobalDb) -> IngestStats {
     let Some(home) = crate::agents::home_dir() else {
         return IngestStats::empty();
     };
-    ingest_from_home(gdb, &home).await
+    // Codex's own override of its data folder.
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| home.join(".codex"), PathBuf::from);
+    ingest_sources(gdb, &home, &codex_home).await
 }
 
 #[cfg(test)]
@@ -731,6 +762,42 @@ mod tests {
         let db_path = tmp.path().join(".tokensave").join("global.db");
         std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
         GlobalDb::open_at(&db_path).await.unwrap()
+    }
+
+    /// The full ingest reads Codex sessions from `home/.codex/sessions` and
+    /// counts their turns with the others; the Claude-only ingest the Stop
+    /// hook runs does not read them.
+    #[tokio::test]
+    async fn the_full_ingest_reads_codex_sessions_and_the_stop_hook_does_not() {
+        let home_tmp = TempDir::new().unwrap();
+        let sessions = home_tmp.path().join(".codex").join("sessions").join("2026");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("rollout-a.jsonl"),
+            [
+                r#"{"timestamp":"2026-10-20T10:00:00.000Z","type":"session_meta","payload":{"id":"T1","session_id":"T1","cwd":"/work/r","source":"exec"}}"#,
+                r#"{"timestamp":"2026-10-20T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/work/r","model":"claude-opus-4-6","effort":"high"}}"#,
+                r#"{"timestamp":"2026-10-20T10:00:02.000Z","type":"token_usage_record","payload":{"response_id":"r1","session_id":"T1","thread_id":"T1","usage":{"input_tokens":100,"cached_input_tokens":40,"cache_write_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":110}}}"#,
+                "{\"type\":",
+                "",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        std::fs::write(sessions.join("rollout-b.jsonl.zst"), b"").unwrap();
+
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let claude_only = ingest_claude_from_home(&gdb, home_tmp.path()).await;
+        assert_eq!(claude_only.turns_inserted, 0);
+        assert!(!claude_only.coverage.iter().any(|c| c.agent == "codex"));
+
+        let stats = ingest_from_home(&gdb, home_tmp.path()).await;
+        assert_eq!(stats.turns_inserted, 1);
+        assert_eq!(stats.tokens_consumed, 60 + 10);
+        assert_eq!((stats.lines_unparseable, stats.files_unread), (1, 1));
+        let codex = stats.coverage.iter().find(|c| c.agent == "codex").unwrap();
+        assert_eq!((codex.state, codex.sessions), (CoverageState::Partial, 1));
     }
 
     /// `ingest_claude_from_home` must not populate Droid coverage or `turns_updated`.

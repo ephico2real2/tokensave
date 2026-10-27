@@ -154,7 +154,11 @@ pub fn format_coverage(coverage: &[SourceCoverage], by_agent: &[AgentCostSummary
     let claude_state = state_of("claude");
     let droid_state = state_of("droid");
     let pi_state = state_of("pi");
-    if droid_state == CoverageState::Absent && pi_state == CoverageState::Absent {
+    let codex_state = state_of("codex");
+    if droid_state == CoverageState::Absent
+        && pi_state == CoverageState::Absent
+        && codex_state == CoverageState::Absent
+    {
         return String::new();
     }
 
@@ -166,13 +170,11 @@ pub fn format_coverage(coverage: &[SourceCoverage], by_agent: &[AgentCostSummary
             .saturating_add(u.cache_write_tokens)
             .saturating_add(u.cache_read_tokens)
     });
-    if droid_state == CoverageState::Absent {
-        return format!("Coverage: {claude_text}; Pi {}", coverage_word(pi_state));
-    }
-
+    // Claude, then each other source that has data, in a fixed order.
+    let mut parts = vec![claude_text];
     let droid_text = match droid_state {
-        CoverageState::Absent => unreachable!("handled above"),
-        CoverageState::Partial => match (usage, raw) {
+        CoverageState::Absent => None,
+        CoverageState::Partial => Some(match (usage, raw) {
             (Some(u), Some(r)) if r > 0 => match u.credits {
                 Some(credits) => format!(
                     "Droid {} credits, {} raw tokens (partial, session-start buckets)",
@@ -185,8 +187,8 @@ pub fn format_coverage(coverage: &[SourceCoverage], by_agent: &[AgentCostSummary
                 ),
             },
             _ => "Droid partial; no usage in range".to_string(),
-        },
-        CoverageState::Complete => match (usage, raw) {
+        }),
+        CoverageState::Complete => Some(match (usage, raw) {
             (Some(u), Some(r)) if r > 0 => match u.credits {
                 Some(credits) => format!(
                     "Droid {} credits, {} raw tokens (observed locally, session-start buckets)",
@@ -199,16 +201,16 @@ pub fn format_coverage(coverage: &[SourceCoverage], by_agent: &[AgentCostSummary
                 ),
             },
             _ => "Droid complete; no usage in range".to_string(),
-        },
+        }),
     };
-    if pi_state == CoverageState::Absent {
-        format!("Coverage: {claude_text}; {droid_text}")
-    } else {
-        format!(
-            "Coverage: {claude_text}; {droid_text}; Pi {}",
-            coverage_word(pi_state)
-        )
+    parts.extend(droid_text);
+    if pi_state != CoverageState::Absent {
+        parts.push(format!("Pi {}", coverage_word(pi_state)));
     }
+    if codex_state != CoverageState::Absent {
+        parts.push(format!("Codex {}", coverage_word(codex_state)));
+    }
+    format!("Coverage: {}", parts.join("; "))
 }
 
 /// Parse a range string into a unix timestamp for "since".
@@ -395,6 +397,35 @@ mod tests {
         ];
         let got = format_coverage(&coverage, &[]);
         assert!(got.is_empty(), "{got}");
+    }
+
+    #[test]
+    fn format_coverage_names_codex_after_the_other_sources() {
+        let source = |agent, state| SourceCoverage {
+            agent,
+            state,
+            sessions: 1,
+        };
+        let coverage = vec![
+            source("claude", CoverageState::Complete),
+            source("droid", CoverageState::Absent),
+            source("pi", CoverageState::Absent),
+            source("codex", CoverageState::Partial),
+        ];
+        assert_eq!(
+            format_coverage(&coverage, &[]),
+            "Coverage: Claude complete; Codex partial"
+        );
+        let with_pi = [
+            &coverage[..2],
+            &[source("pi", CoverageState::Complete)],
+            &coverage[3..],
+        ]
+        .concat();
+        assert_eq!(
+            format_coverage(&with_pi, &[]),
+            "Coverage: Claude complete; Pi complete; Codex partial"
+        );
     }
 
     #[test]
