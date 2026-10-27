@@ -67,7 +67,8 @@ jobs:
         # `test-transport` only exposes test hooks and gates the MCP
         # transport suites (mcp_server_test, report_savings_test, ...); it
         # adds no dependencies, so this is a superset of the plain run.
-        run: cargo test --workspace --locked --features test-transport
+        # --no-fail-fast: one failing test binary must not hide the others' results.
+        run: cargo test --workspace --locked --features test-transport --no-fail-fast
 
   clippy:
     name: Clippy

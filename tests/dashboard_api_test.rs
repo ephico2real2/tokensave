@@ -518,6 +518,12 @@ async fn get_json(port: u16, path: &str) -> Value {
     reply.json()
 }
 
+/// A repo path that is absolute on this platform and holds no turn.
+#[cfg(not(windows))]
+const NOWHERE: &str = "/nowhere";
+#[cfg(windows)]
+const NOWHERE: &str = r"C:\nowhere";
+
 fn encode(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
@@ -1264,7 +1270,11 @@ async fn models_thinking_and_fallbacks_follow_the_turns() {
         })
     );
     assert_eq!(
-        get_json(port, "/api/fallbacks?range=7&repo=%2Fnowhere").await,
+        get_json(
+            port,
+            &format!("/api/fallbacks?range=7&repo={}", encode(NOWHERE))
+        )
+        .await,
         serde_json::json!({"pairs": [], "rate": 0.0})
     );
 }

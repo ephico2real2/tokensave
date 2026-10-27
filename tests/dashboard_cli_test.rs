@@ -12,6 +12,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -19,6 +20,8 @@ use tempfile::TempDir;
 /// How long one `tokensave dashboard` command may take; a background start
 /// waits up to 10 s for its server.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a command's output may stay open after the command exits.
+const PIPE_PATIENCE: Duration = Duration::from_secs(5);
 
 fn tokensave(home: &TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tokensave"));
@@ -58,37 +61,53 @@ fn exited_within(child: &mut Child, timeout: Duration) -> bool {
 }
 
 /// Runs `command` to its end, or kills it after `timeout` and returns `None`.
-fn output_within(command: &mut Command, timeout: Duration) -> Option<Output> {
+fn output_within(command: &mut Command, timeout: Duration) -> Result<Output, String> {
     let mut child = Spawned(
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .ok()?,
+            .map_err(|error| format!("could not be started: {error}"))?,
     );
     let stdout = drain(child.0.stdout.take());
     let stderr = drain(child.0.stderr.take());
     if !exited_within(&mut child.0, timeout) {
-        return None;
+        return Err(format!(
+            "did not exit within {} s; it was killed",
+            timeout.as_secs()
+        ));
     }
-    Some(Output {
-        status: child.0.wait().ok()?,
-        stdout: stdout.join().ok()?,
-        stderr: stderr.join().ok()?,
+    // A pipe ends when every copy of its write end is closed: a process the
+    // command started that still holds one (a handle leaked into the server)
+    // would keep it open for the server's whole life.
+    let ended = |pipe: mpsc::Receiver<Vec<u8>>| {
+        pipe.recv_timeout(PIPE_PATIENCE).map_err(|_| {
+            format!(
+                "exited, but its output stayed open {} s later: a process it started holds it",
+                PIPE_PATIENCE.as_secs()
+            )
+        })
+    };
+    Ok(Output {
+        status: child.0.wait().map_err(|error| error.to_string())?,
+        stdout: ended(stdout)?,
+        stderr: ended(stderr)?,
     })
 }
 
 /// Reads `pipe` to its end on a thread of its own, so a full pipe cannot
-/// stall the command that writes it.
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+/// stall the command that writes it; the bytes arrive when the pipe ends.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+    let (send, receive) = mpsc::channel();
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(mut pipe) = pipe {
             let _ = pipe.read_to_end(&mut bytes);
         }
-        bytes
-    })
+        let _ = send.send(bytes);
+    });
+    receive
 }
 
 fn run(home: &TempDir, args: &[&str]) -> Output {
@@ -96,13 +115,8 @@ fn run(home: &TempDir, args: &[&str]) -> Output {
 }
 
 fn run_command(command: &mut Command, args: &[&str]) -> Output {
-    output_within(command, COMMAND_TIMEOUT).unwrap_or_else(|| {
-        panic!(
-            "`tokensave {}` did not exit within {} s; it was killed",
-            args.join(" "),
-            COMMAND_TIMEOUT.as_secs()
-        )
-    })
+    output_within(command, COMMAND_TIMEOUT)
+        .unwrap_or_else(|problem| panic!("`tokensave {}` {problem}", args.join(" ")))
 }
 
 fn stdout(output: &Output) -> String {

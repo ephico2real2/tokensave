@@ -215,6 +215,8 @@ pub fn start_background(home: &Path, config: &DashboardConfig) -> Result<Started
         .stdout(log.try_clone().map_err(io)?)
         .stderr(log);
     detach(&mut command);
+    #[cfg(windows)]
+    keep_own_handles();
     let mut child = command.spawn().map_err(io)?;
     let pid = child.id();
 
@@ -259,6 +261,35 @@ fn detach(command: &mut Command) {
         use std::os::windows::process::CommandExt;
         // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
         command.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+}
+
+/// Keeps this process's standard handles from passing to the server.
+///
+/// Windows gives a child every inheritable handle its parent holds (std's
+/// `Command` spawns with `bInheritHandles`), so the server would hold the
+/// pipes of whoever captured `start`'s output for its whole life, and that
+/// reader would never see their end (rust-lang/rust#54760; nextest clears the
+/// same flag for its tests). `start` exits once the server runs, so its own
+/// handles need not be inheritable.
+#[cfg(windows)]
+fn keep_own_handles() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: GetStdHandle takes no pointer and returns this process's
+        // handle, null or INVALID_HANDLE_VALUE; SetHandleInformation changes
+        // only the inherit flag of a valid handle this process owns.
+        unsafe {
+            let handle = GetStdHandle(which);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
     }
 }
 
