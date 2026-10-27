@@ -52,6 +52,7 @@ mod csharp_extraction_test;
 mod csharp_interfaces_643_test;
 mod csharp_receiver_types_test;
 mod cuda_extraction_test;
+mod cursor_sync_test;
 mod dart_extraction_test;
 mod data_home_guard_test;
 mod db_query_test;

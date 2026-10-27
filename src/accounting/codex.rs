@@ -134,7 +134,7 @@ fn agent_run_of(meta: &Value, project_hash: &str) -> Option<AgentRun> {
 /// The project bucket of a working directory: Claude Code's project folder
 /// name for it (every character that is not ASCII alphanumeric becomes `-`),
 /// so a repository's Codex and Claude Code turns share a bucket.
-fn project_hash_of(cwd: Option<&str>) -> String {
+pub(crate) fn project_hash_of(cwd: Option<&str>) -> String {
     cwd.map_or_else(
         || "unknown".to_string(),
         |cwd| {

@@ -28,6 +28,23 @@ pub struct SavingsDay {
     pub calls: u64,
 }
 
+/// What [`GlobalDb::upsert_cursor_turns`] did, per turn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CursorWrite {
+    pub inserted: u64,
+    /// Replaced by a larger snapshot of the same event.
+    pub updated: u64,
+    /// Already stored as large or larger.
+    pub unchanged: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CursorOutcome {
+    Inserted,
+    Updated,
+    Unchanged,
+}
+
 /// A sum of turn costs, and how many turns it leaves out because their model
 /// had no price: their cost is unknown, so it is neither in `usd` nor read as
 /// zero (inkcast #252).
@@ -964,7 +981,7 @@ impl GlobalDb {
         Some(changed)
     }
 
-    /// Prices the Claude Code and Codex turns recorded with no price
+    /// Prices the Claude Code, Codex and Cursor turns recorded with no price
     /// (`cost_usd IS NULL`) whose model `price` now prices, from the tokens
     /// each row holds: one `UPDATE` per model, all in one `BEGIN IMMEDIATE`
     /// transaction. A priced row is never changed. Returns the rows priced, or `None` on a database
@@ -982,7 +999,7 @@ impl GlobalDb {
                 .conn
                 .query(
                     "SELECT DISTINCT model FROM turns
-                     WHERE cost_usd IS NULL AND agent IN ('claude', 'codex')",
+                     WHERE cost_usd IS NULL AND agent IN ('claude', 'codex', 'cursor')",
                     (),
                 )
                 .await
@@ -1013,7 +1030,7 @@ impl GlobalDb {
                          + (output_tokens / 1000000.0) * ?3
                          + (cache_write_tokens / 1000000.0) * ?4
                          + (cache_read_tokens / 1000000.0) * ?5
-                     WHERE model = ?1 AND agent IN ('claude', 'codex') AND cost_usd IS NULL",
+                     WHERE model = ?1 AND agent IN ('claude', 'codex', 'cursor') AND cost_usd IS NULL",
                     params![
                         model.as_str(),
                         pricing.input_per_mtok,
@@ -1224,6 +1241,162 @@ impl GlobalDb {
             )
             .await
             .is_ok_and(|n| n > 0)
+    }
+
+    /// The newest turn of `agent`, in unix seconds; `None` when it has none.
+    pub async fn newest_turn_timestamp(&self, agent: &str) -> Option<u64> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT MAX(timestamp) FROM turns WHERE agent = ?1",
+                params![agent],
+            )
+            .await
+            .ok()?;
+        let row = rows.next().await.ok()??;
+        row.get::<Option<i64>>(0).ok()?.map(|ts| ts as u64)
+    }
+
+    /// Records Cursor usage events (inkcast #261) in one `BEGIN IMMEDIATE`
+    /// transaction, rolled back instead of committed when `dry_run`, so a dry
+    /// run counts exactly what a sync would write. `None` on a database
+    /// error, with nothing written.
+    ///
+    /// Cursor reports an event several times while it runs, with growing
+    /// totals. A stored event is replaced only by a snapshot with more tokens,
+    /// or as many and a higher cost (an unknown cost below every known one),
+    /// so the row is the largest snapshot whatever order they arrive in. Its
+    /// project is kept when the new snapshot has none. Only a `cursor` row is
+    /// ever replaced.
+    pub async fn upsert_cursor_turns(
+        &self,
+        turns: &[crate::types::CostTurn],
+        dry_run: bool,
+    ) -> Option<CursorWrite> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .ok()?;
+        let mut written = Some(CursorWrite::default());
+        for turn in turns {
+            let Some(outcome) = Self::upsert_cursor_turn(&tx, turn).await else {
+                written = None;
+                break;
+            };
+            if let Some(counts) = written.as_mut() {
+                match outcome {
+                    CursorOutcome::Inserted => counts.inserted += 1,
+                    CursorOutcome::Updated => counts.updated += 1,
+                    CursorOutcome::Unchanged => counts.unchanged += 1,
+                }
+            }
+        }
+        let Some(written) = written else {
+            // Rolled back here so the outcome is not left to `Drop`.
+            let _ = tx.rollback().await;
+            return None;
+        };
+        if dry_run {
+            tx.rollback().await.ok()?;
+        } else {
+            tx.commit().await.ok()?;
+        }
+        Some(written)
+    }
+
+    async fn upsert_cursor_turn(
+        tx: &libsql::Transaction,
+        turn: &crate::types::CostTurn,
+    ) -> Option<CursorOutcome> {
+        let existed = tx
+            .query(
+                "SELECT 1 FROM turns WHERE message_id = ?1",
+                params![turn.message_id.clone()],
+            )
+            .await
+            .ok()?
+            .next()
+            .await
+            .ok()?
+            .is_some();
+        let changed = tx
+            .execute(
+                "INSERT INTO turns
+                 (message_id, project_hash, session_id, model, timestamp,
+                  input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+                  cost_usd, category, tool_names, agent)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 ON CONFLICT(message_id) DO UPDATE SET
+                     project_hash = CASE WHEN excluded.project_hash = 'unknown'
+                                         THEN turns.project_hash
+                                         ELSE excluded.project_hash END,
+                     session_id = excluded.session_id,
+                     model = excluded.model,
+                     input_tokens = excluded.input_tokens,
+                     output_tokens = excluded.output_tokens,
+                     cache_write_tokens = excluded.cache_write_tokens,
+                     cache_read_tokens = excluded.cache_read_tokens,
+                     cost_usd = excluded.cost_usd
+                 WHERE turns.agent = 'cursor'
+                   AND (excluded.input_tokens + excluded.output_tokens
+                          + excluded.cache_write_tokens + excluded.cache_read_tokens
+                        > turns.input_tokens + turns.output_tokens
+                          + turns.cache_write_tokens + turns.cache_read_tokens
+                        OR (excluded.input_tokens + excluded.output_tokens
+                              + excluded.cache_write_tokens + excluded.cache_read_tokens
+                            = turns.input_tokens + turns.output_tokens
+                              + turns.cache_write_tokens + turns.cache_read_tokens
+                            AND COALESCE(excluded.cost_usd, -1.0)
+                                > COALESCE(turns.cost_usd, -1.0)))",
+                params![
+                    turn.message_id.clone(),
+                    turn.project_hash.clone(),
+                    turn.session_id.clone(),
+                    turn.model.clone(),
+                    turn.timestamp as i64,
+                    turn.input_tokens as i64,
+                    turn.output_tokens as i64,
+                    turn.cache_write_tokens as i64,
+                    turn.cache_read_tokens as i64,
+                    turn.cost_usd,
+                    turn.category.clone(),
+                    turn.tool_names.clone(),
+                    turn.agent.clone(),
+                ],
+            )
+            .await
+            .ok()?;
+        Some(match (existed, changed > 0) {
+            (false, _) => CursorOutcome::Inserted,
+            (true, true) => CursorOutcome::Updated,
+            (true, false) => CursorOutcome::Unchanged,
+        })
+    }
+
+    /// A Cursor turn's cost, total tokens and project, for tests.
+    #[cfg(test)]
+    pub(crate) async fn cursor_turn_row(
+        &self,
+        message_id: &str,
+    ) -> Option<(Option<f64>, u64, String)> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT cost_usd,
+                        input_tokens + output_tokens + cache_write_tokens + cache_read_tokens,
+                        project_hash
+                 FROM turns WHERE message_id = ?1",
+                params![message_id.to_string()],
+            )
+            .await
+            .ok()?;
+        let row = rows.next().await.ok()??;
+        Some((
+            row.get::<Option<f64>>(0).ok()?,
+            row.get::<i64>(1).ok()? as u64,
+            row.get::<String>(2).ok()?,
+        ))
     }
 
     /// Total cost since a given unix timestamp.
