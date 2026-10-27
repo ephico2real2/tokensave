@@ -28,9 +28,6 @@ pub struct SavingsDay {
     pub calls: u64,
 }
 
-/// A sum of turn costs, and how many turns it leaves out because their model
-/// had no price: their cost is unknown, so it is neither in `usd` nor read as
-/// zero (inkcast #252).
 /// What [`GlobalDb::upsert_cursor_turns`] did, per turn.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CursorWrite {
@@ -48,6 +45,9 @@ enum CursorOutcome {
     Unchanged,
 }
 
+/// A sum of turn costs, and how many turns it leaves out because their model
+/// had no price: their cost is unknown, so it is neither in `usd` nor read as
+/// zero (inkcast #252).
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize)]
 pub struct CostTotal {
     /// The USD cost of the priced turns.
