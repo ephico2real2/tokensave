@@ -52,7 +52,8 @@ pub struct TurnState {
     pub output_tokens: u64,
     pub cache_write_tokens: u64,
     pub cache_read_tokens: u64,
-    pub cost_usd: f64,
+    /// `None` while the model has no price (inkcast #252).
+    pub cost_usd: Option<f64>,
     pub category: String,
     pub tool_names: String,
     /// The ids of the calls recorded, comma-joined. `None` on a turn recorded
@@ -189,7 +190,7 @@ mod tests {
                 output_tokens,
                 cache_write_tokens: 10,
                 cache_read_tokens: 20,
-                cost_usd: 0.0,
+                cost_usd: None,
                 category: classifier::classify_with(&names, bash).as_str().to_string(),
                 tool_names: names.join(","),
                 agent: "claude".to_string(),
@@ -266,8 +267,21 @@ mod tests {
         let state = merge_all(&lines);
         assert_eq!(state.output_tokens, 1200);
         let priced = pricing::cost_of_turn("claude-opus-4-6", 3, 1200, 10, 20);
-        assert!(priced > 0.0);
-        assert!((state.cost_usd - priced).abs() < f64::EPSILON);
+        assert!(priced.is_some_and(|cost| cost > 0.0));
+        assert_eq!(state.cost_usd, priced);
+    }
+
+    /// A turn whose model has no price stays unpriced as its counters grow:
+    /// never `0.0` (inkcast #252).
+    #[test]
+    fn an_unpriced_turn_stays_unpriced() {
+        let mut lines = [line(8, &[], &[]), line(1200, &[], &[])];
+        for line in &mut lines {
+            line.turn.model = "unpriced-model-zzz-2099".to_string();
+        }
+        let state = merge_all(&lines);
+        assert_eq!(state.output_tokens, 1200);
+        assert_eq!(state.cost_usd, None);
     }
 
     #[test]

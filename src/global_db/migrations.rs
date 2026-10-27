@@ -32,10 +32,16 @@ pub(super) struct Migration {
 }
 
 /// Every migration, in order.
-pub(super) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    steps: V1,
-}];
+pub(super) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        steps: V1,
+    },
+    Migration {
+        version: 2,
+        steps: V2,
+    },
+];
 
 /// The schema version this binary writes.
 pub(super) const LATEST: u32 = latest(MIGRATIONS);
@@ -170,6 +176,76 @@ const V1: &[Step] = &[
     // first batch would fail.
     Step::Batch("CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)"),
 ];
+
+/// Version 2: a turn whose model had no price holds `cost_usd` NULL, unknown,
+/// where it held `0.0`, which reads as free (inkcast #252).
+///
+/// SQLite cannot drop `NOT NULL` from a column, so `turns` is rebuilt as
+/// <https://www.sqlite.org/lang_altertable.html#otheralter> describes: a new
+/// table, every row copied by column name, the old table dropped, the new one
+/// renamed, its indexes created again. Nothing references `turns`, and
+/// `global.db` never enables foreign keys.
+///
+/// Then the Claude turns stored at `0.0` with tokens become NULL: every Claude
+/// model is priced above zero, so `0.0` with tokens is a turn recorded before
+/// its model had a price. The next ingest prices those whose model has one
+/// now (`GlobalDb::price_unpriced_turns`); a migration does not read the price
+/// table. Droid turns hold `0.0` by design, their price being credits, and a
+/// turn with no tokens costs nothing, so neither changes.
+const V2: &[Step] = &[Step::Batch(
+    "CREATE TABLE turns_v2 (
+        message_id TEXT PRIMARY KEY,
+        project_hash TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL,
+        category TEXT NOT NULL,
+        tool_names TEXT NOT NULL DEFAULT '',
+        agent TEXT NOT NULL DEFAULT 'claude',
+        credits INTEGER,
+        tool_result_tokens INTEGER NOT NULL DEFAULT 0,
+        effort TEXT,
+        requested_model TEXT,
+        thinking_tokens INTEGER,
+        thinking_ms INTEGER,
+        speed TEXT,
+        service_tier TEXT,
+        git_branch TEXT,
+        run_id TEXT,
+        tool_use_ids TEXT,
+        bash_signals INTEGER,
+        result_ids TEXT
+    );
+    INSERT INTO turns_v2 (
+        message_id, project_hash, session_id, model, timestamp,
+        input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+        cost_usd, category, tool_names, agent, credits, tool_result_tokens,
+        effort, requested_model, thinking_tokens, thinking_ms, speed,
+        service_tier, git_branch, run_id, tool_use_ids, bash_signals, result_ids
+    )
+    SELECT
+        message_id, project_hash, session_id, model, timestamp,
+        input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+        cost_usd, category, tool_names, agent, credits, tool_result_tokens,
+        effort, requested_model, thinking_tokens, thinking_ms, speed,
+        service_tier, git_branch, run_id, tool_use_ids, bash_signals, result_ids
+    FROM turns;
+    DROP TABLE turns;
+    ALTER TABLE turns_v2 RENAME TO turns;
+    CREATE INDEX idx_turns_timestamp ON turns(timestamp);
+    CREATE INDEX idx_turns_project ON turns(project_hash);
+    CREATE INDEX idx_turns_model ON turns(model);
+    CREATE INDEX idx_turns_run ON turns(run_id);
+    UPDATE turns SET cost_usd = NULL
+     WHERE agent = 'claude' AND cost_usd = 0
+       AND input_tokens + output_tokens + cache_write_tokens + cache_read_tokens > 0;
+    CREATE INDEX idx_turns_unpriced ON turns(model) WHERE cost_usd IS NULL",
+)];
 
 /// Where a database's schema stands after [`migrate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,6 +480,131 @@ mod tests {
     }
 
     /// Versions strictly increase, so each migration has one place.
+    /// `(name, notnull)` of every column of `turns`, in order.
+    async fn turns_columns(conn: &Connection) -> Vec<(String, i64)> {
+        let mut rows = conn
+            .query(
+                "SELECT name, \"notnull\" FROM pragma_table_info('turns')",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut columns = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            columns.push((row.get(0).unwrap(), row.get(1).unwrap()));
+        }
+        columns
+    }
+
+    /// Every row of `turns` with every column but `cost_usd`, as text, and
+    /// its `cost_usd`, by `message_id`.
+    async fn turns_rows(conn: &Connection) -> Vec<(String, Option<f64>)> {
+        let others: Vec<String> = turns_columns(conn)
+            .await
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| name != "cost_usd")
+            .collect();
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT cost_usd, {} FROM turns ORDER BY message_id",
+                    others.join(", ")
+                ),
+                (),
+            )
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            let values: Vec<String> = (1..row.column_count())
+                .map(|i| format!("{:?}", row.get_value(i).unwrap()))
+                .collect();
+            out.push((values.join("|"), row.get::<Option<f64>>(0).unwrap()));
+        }
+        out
+    }
+
+    /// Version 2 keeps every row and column of `turns`, lets `cost_usd` be
+    /// NULL, and makes NULL only the Claude turns stored at `0.0` with tokens
+    /// (inkcast #252).
+    #[tokio::test]
+    async fn version_2_marks_the_claude_turns_stored_at_zero_as_unpriced() {
+        let (_tmp, conn) = connection().await;
+        migrate(&conn, &MIGRATIONS[..1]).await.unwrap();
+        conn.execute_batch(
+            "INSERT INTO turns (message_id, project_hash, session_id, model, timestamp,
+                 input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+                 cost_usd, category, tool_names, agent, credits, tool_result_tokens,
+                 effort, run_id, tool_use_ids, bash_signals, result_ids)
+             VALUES
+                 ('free', 'p', 's', 'claude-opus-5-5', 1, 3, 50, 10, 20, 0.0,
+                  'coding', 'Edit', 'claude', NULL, 7, 'high', 'r1', 'toolu_a', 2, 'toolu_a'),
+                 ('priced', 'p', 's', 'claude-opus-4-6', 2, 3, 50, 0, 0, 0.25,
+                  'coding', '', 'claude', NULL, 0, NULL, NULL, NULL, NULL, NULL),
+                 ('empty', 'p', 's', '<synthetic>', 3, 0, 0, 0, 0, 0.0,
+                  'conversation', '', 'claude', NULL, 0, NULL, NULL, NULL, NULL, NULL),
+                 ('droid', 'p', 's', 'gemini-pro', 4, 3, 50, 0, 0, 0.0,
+                  'unclassified', '', 'droid', 9, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .await
+        .unwrap();
+        let columns = turns_columns(&conn).await;
+        let before = turns_rows(&conn).await;
+
+        assert_eq!(migrate(&conn, MIGRATIONS).await.unwrap(), Outcome::Current);
+
+        assert_eq!(user_version(&conn).await.unwrap(), 2);
+        let after = turns_rows(&conn).await;
+        let costs: Vec<Option<f64>> = after.iter().map(|(_, cost)| *cost).collect();
+        // droid, empty, free, priced
+        assert_eq!(costs, [Some(0.0), Some(0.0), None, Some(0.25)]);
+        let rest = |rows: &[(String, Option<f64>)]| -> Vec<String> {
+            rows.iter().map(|(rest, _)| rest.clone()).collect()
+        };
+        assert_eq!(rest(&after), rest(&before));
+        let nullable: Vec<(String, i64)> = columns
+            .into_iter()
+            .map(|(name, notnull)| {
+                let notnull = if name == "cost_usd" { 0 } else { notnull };
+                (name, notnull)
+            })
+            .collect();
+        assert_eq!(turns_columns(&conn).await, nullable);
+
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'index' AND tbl_name = 'turns' AND sql IS NOT NULL
+                 ORDER BY name",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut indexes = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            indexes.push(row.get::<String>(0).unwrap());
+        }
+        assert_eq!(
+            indexes,
+            [
+                "idx_turns_model",
+                "idx_turns_project",
+                "idx_turns_run",
+                "idx_turns_timestamp",
+                "idx_turns_unpriced"
+            ]
+        );
+        assert_eq!(
+            tables(&conn)
+                .await
+                .iter()
+                .filter(|t| t.starts_with("turns"))
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn versions_increase_from_one() {
         for (index, migration) in MIGRATIONS.iter().enumerate() {

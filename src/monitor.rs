@@ -359,8 +359,8 @@ pub fn run() -> std::io::Result<()> {
 
 /// Cached cost data for the monitor panel, refreshed periodically.
 pub struct CostCache {
-    pub today_cost: f64,
-    pub week_cost: f64,
+    pub today_cost: crate::global_db::CostTotal,
+    pub week_cost: crate::global_db::CostTotal,
     pub tokens_saved: u64,
     pub efficiency_pct: f64,
     pub top_model: String,
@@ -379,8 +379,8 @@ pub struct CostCache {
 impl CostCache {
     fn new() -> Self {
         Self {
-            today_cost: 0.0,
-            week_cost: 0.0,
+            today_cost: crate::global_db::CostTotal::default(),
+            week_cost: crate::global_db::CostTotal::default(),
             tokens_saved: 0,
             efficiency_pct: 0.0,
             top_model: String::new(),
@@ -400,10 +400,11 @@ impl CostCache {
     }
 
     /// Returns true if there is any meaningful activity to display:
-    /// USD today/week, Droid credits (Some and positive), or Droid raw tokens.
+    /// USD or unpriced turns today/week, Droid credits (Some and positive), or
+    /// Droid raw tokens.
     pub fn has_activity(&self) -> bool {
-        self.today_cost >= 0.001
-            || self.week_cost >= 0.001
+        !self.today_cost.is_empty()
+            || !self.week_cost.is_empty()
             || self.week_credits.is_some_and(|c| c > 0)
             || self.week_droid_tokens > 0
     }
@@ -424,6 +425,7 @@ pub fn truncate_to_chars(s: &str, width: usize) -> String {
 /// callers truncate to terminal width before padding.
 pub fn cost_panel_lines(cache: &CostCache) -> Vec<String> {
     use crate::accounting::parser::CoverageState;
+    use crate::display::format_cost;
 
     let saved_str = crate::display::format_token_count(cache.tokens_saved);
     let top_model_part = if cache.top_model.is_empty() {
@@ -435,8 +437,10 @@ pub fn cost_panel_lines(cache: &CostCache) -> Vec<String> {
     if cache.droid_state == CoverageState::Absent {
         return vec![
             format!(
-                "  Spent: ${:.2} today | ${:.2} 7d    Saved: {}",
-                cache.today_cost, cache.week_cost, saved_str
+                "  Spent: {} today | {} 7d    Saved: {}",
+                format_cost(cache.today_cost),
+                format_cost(cache.week_cost),
+                saved_str
             ),
             format!(
                 "  Efficiency: {:.0}%    Top model: {}",
@@ -473,8 +477,10 @@ pub fn cost_panel_lines(cache: &CostCache) -> Vec<String> {
 
     vec![
         format!(
-            "  USD spent: ${:.2} today | ${:.2} 7d    Saved: {}",
-            cache.today_cost, cache.week_cost, saved_str
+            "  USD spent: {} today | {} 7d    Saved: {}",
+            format_cost(cache.today_cost),
+            format_cost(cache.week_cost),
+            saved_str
         ),
         droid_line,
         format!(
@@ -512,8 +518,8 @@ fn refresh_cost_cache(cache: &mut CostCache) {
         let week_start = now_epoch.saturating_sub(7 * 86400);
 
         // Claude USD costs (legacy by-model query is Claude-only).
-        cache.today_cost = gdb.total_cost_since(today_start).await.unwrap_or(0.0);
-        cache.week_cost = gdb.total_cost_since(week_start).await.unwrap_or(0.0);
+        cache.today_cost = gdb.total_cost_since(today_start).await.unwrap_or_default();
+        cache.week_cost = gdb.total_cost_since(week_start).await.unwrap_or_default();
 
         let week_agents = gdb.cost_by_agent_since(week_start).await;
         let week_consumed = crate::accounting::metrics::consumed_tokens(
@@ -528,10 +534,12 @@ fn refresh_cost_cache(cache: &mut CostCache) {
             0.0
         };
 
+        // The first model with a priced cost: a model with no price sorts
+        // last, and is not a "top priced model".
         let models = gdb.cost_by_model_since(today_start).await;
-        if let Some((model, cost, _)) = models.first() {
+        if let Some((model, cost, _)) = models.iter().find(|(_, cost, _)| cost.usd > 0.0) {
             cache.top_model.clone_from(model);
-            cache.top_model_cost = *cost;
+            cache.top_model_cost = cost.usd;
         }
 
         // Droid credits and raw tokens.

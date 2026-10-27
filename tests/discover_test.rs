@@ -26,7 +26,7 @@ fn turn(id: &str, ts: u64, input: u64, tool_names: &str) -> CostTurn {
         output_tokens: 10,
         cache_write_tokens: 0,
         cache_read_tokens: 0,
-        cost_usd: 0.01,
+        cost_usd: Some(0.01),
         category: "exploration".to_string(),
         tool_names: tool_names.to_string(),
         agent: "claude".to_string(),

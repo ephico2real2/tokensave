@@ -6,11 +6,17 @@
 //! 3. **Remote refresh** from `LiteLLM`'s public pricing JSON -- fetched at most
 //!    once every 24 hours, stored to the cache file.
 //!
+//! The table is built once per process and rebuilt when the cache file
+//! changes: [`refresh_pricing`] rebuilds it after writing the file, and every
+//! ingest calls [`reload_if_changed`] first, so a long-running process prices
+//! with the file another process fetched (inkcast #252).
+//!
 //! All prices are per million tokens (`MTok`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, PoisonError, RwLock};
+use std::time::{Duration, SystemTime};
 
 /// `LiteLLM` pricing data URL. Public, no authentication required.
 /// See: <https://github.com/BerriAI/litellm>
@@ -24,12 +30,33 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const CACHE_TTL_SECS: i64 = 86400;
 
 /// Per-model pricing in USD per million tokens.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelPricing {
     pub input_per_mtok: f64,
     pub output_per_mtok: f64,
     pub cache_write_per_mtok: f64,
     pub cache_read_per_mtok: f64,
+}
+
+impl ModelPricing {
+    /// The USD cost of these token counts.
+    ///
+    /// `GlobalDb::price_unpriced_turns` computes the same sum in SQL, term by
+    /// term in this order, so a turn priced there costs to the bit what it
+    /// costs here.
+    pub fn cost(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_write_tokens: u64,
+        cache_read_tokens: u64,
+    ) -> f64 {
+        let mtok = 1_000_000.0;
+        (input_tokens as f64 / mtok) * self.input_per_mtok
+            + (output_tokens as f64 / mtok) * self.output_per_mtok
+            + (cache_write_tokens as f64 / mtok) * self.cache_write_per_mtok
+            + (cache_read_tokens as f64 / mtok) * self.cache_read_per_mtok
+    }
 }
 
 /// Path to the cached pricing file: `~/.tokensave/pricing.json`.
@@ -129,9 +156,8 @@ fn is_provider_prefixed_model(model_id: &str) -> bool {
 /// Whether tokensave has a price for `model`.
 ///
 /// `false` means the turn's USD cost is unknown, not that it is free: callers
-/// surface an explicit unpriced state rather than a misleading `$0.00`. This is
-/// the guard that keeps a new or routed model from silently reading as free
-/// (see `cost_of_turn`, which returns `0.0` for any unknown model).
+/// surface an explicit unpriced state rather than a misleading `$0.00` (see
+/// [`cost_of_turn`], which returns `None` for such a model).
 pub fn is_priced(model: &str) -> bool {
     lookup(model).is_some()
 }
@@ -224,18 +250,17 @@ fn parse_litellm_json(json: &str) -> Option<HashMap<String, ModelPricing>> {
 }
 
 /// Try to load pricing from the cache file.
-fn load_cached() -> Option<HashMap<String, ModelPricing>> {
-    let path = cache_path()?;
-    let contents = std::fs::read_to_string(path).ok()?;
+fn load_cached(cache: &Path) -> Option<HashMap<String, ModelPricing>> {
+    let contents = std::fs::read_to_string(cache).ok()?;
     parse_litellm_json(&contents)
 }
 
 /// Build the merged pricing table: cached file over embedded fallback.
-fn build_table() -> HashMap<String, ModelPricing> {
+fn build_table(cache: Option<&Path>) -> HashMap<String, ModelPricing> {
     let mut table = embedded_table();
 
     // Overlay cached entries (which may have newer models or updated prices)
-    if let Some(cached) = load_cached() {
+    if let Some(cached) = cache.and_then(load_cached) {
         for (model_id, pricing) in cached {
             table.insert(model_id, pricing);
         }
@@ -244,17 +269,79 @@ fn build_table() -> HashMap<String, ModelPricing> {
     table
 }
 
-/// Get the global pricing table (initialized once per process).
-fn get_table() -> &'static HashMap<String, ModelPricing> {
-    use std::sync::OnceLock;
-    static TABLE: OnceLock<HashMap<String, ModelPricing>> = OnceLock::new();
-    TABLE.get_or_init(build_table)
+/// The modification time of the cache file, `None` when there is none.
+fn modified(cache: Option<&Path>) -> Option<SystemTime> {
+    std::fs::metadata(cache?).ok()?.modified().ok()
+}
+
+/// A price table built from a cache file, and that file's modification time
+/// when it was read.
+struct Loaded {
+    cache_modified: Option<SystemTime>,
+    table: Arc<HashMap<String, ModelPricing>>,
+}
+
+/// A price table built on first use, and again when its cache file changes.
+struct PriceTable {
+    loaded: RwLock<Option<Loaded>>,
+}
+
+impl PriceTable {
+    const fn new() -> Self {
+        Self {
+            loaded: RwLock::new(None),
+        }
+    }
+
+    /// The table, built from `cache` if it was never built.
+    fn get(&self, cache: Option<&Path>) -> Arc<HashMap<String, ModelPricing>> {
+        let loaded = self.loaded.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(loaded) = loaded.as_ref() {
+            return Arc::clone(&loaded.table);
+        }
+        drop(loaded);
+        self.rebuild(cache)
+    }
+
+    /// Rebuilds the table if `cache` changed since it was read.
+    fn reload_if_changed(&self, cache: Option<&Path>) {
+        let cache_modified = modified(cache);
+        let current = self
+            .loaded
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|loaded| loaded.cache_modified);
+        if current.is_some_and(|current| current != cache_modified) {
+            self.rebuild(cache);
+        }
+    }
+
+    fn rebuild(&self, cache: Option<&Path>) -> Arc<HashMap<String, ModelPricing>> {
+        // The time is read before the file: a file written in between leaves
+        // an older time, and the next check rebuilds again.
+        let cache_modified = modified(cache);
+        let table = Arc::new(build_table(cache));
+        *self.loaded.write().unwrap_or_else(PoisonError::into_inner) = Some(Loaded {
+            cache_modified,
+            table: Arc::clone(&table),
+        });
+        table
+    }
+}
+
+static TABLE: PriceTable = PriceTable::new();
+
+/// Rebuilds the process's price table if `pricing.json` changed since it was
+/// read, as when another process fetched it. Ingestion calls this first.
+pub fn reload_if_changed() {
+    TABLE.reload_if_changed(cache_path().as_deref());
 }
 
 /// Look up pricing for a model ID. Matches the longest prefix.
 /// Returns `None` for unknown models.
-pub fn lookup(model: &str) -> Option<&'static ModelPricing> {
-    lookup_in_table(get_table(), model)
+pub fn lookup(model: &str) -> Option<ModelPricing> {
+    lookup_in_table(&TABLE.get(cache_path().as_deref()), model).copied()
 }
 
 fn lookup_in_table<'a>(
@@ -283,22 +370,28 @@ fn lookup_in_table<'a>(
     best.map(|(_, p)| p)
 }
 
-/// Compute the dollar cost of a single turn.
+/// The USD cost of a single turn, or `None` when its model has no price: the
+/// cost is then unknown, not zero, and is stored as such (inkcast #252). A
+/// turn with no tokens costs nothing whatever its model.
 pub fn cost_of_turn(
     model: &str,
     input_tokens: u64,
     output_tokens: u64,
     cache_write_tokens: u64,
     cache_read_tokens: u64,
-) -> f64 {
-    let Some(p) = lookup(model) else {
-        return 0.0;
-    };
-    let mtok = 1_000_000.0;
-    (input_tokens as f64 / mtok) * p.input_per_mtok
-        + (output_tokens as f64 / mtok) * p.output_per_mtok
-        + (cache_write_tokens as f64 / mtok) * p.cache_write_per_mtok
-        + (cache_read_tokens as f64 / mtok) * p.cache_read_per_mtok
+) -> Option<f64> {
+    if input_tokens == 0 && output_tokens == 0 && cache_write_tokens == 0 && cache_read_tokens == 0
+    {
+        return Some(0.0);
+    }
+    lookup(model).map(|p| {
+        p.cost(
+            input_tokens,
+            output_tokens,
+            cache_write_tokens,
+            cache_read_tokens,
+        )
+    })
 }
 
 /// Fetch fresh pricing from `LiteLLM` and save to the cache file.
@@ -327,7 +420,13 @@ pub fn refresh_pricing() -> bool {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, body).is_ok()
+    if std::fs::write(&path, body).is_err() {
+        return false;
+    }
+    // Rebuilt whatever the file's time says: a rewrite within the
+    // filesystem's time resolution would leave it unchanged.
+    TABLE.rebuild(Some(&path));
+    true
 }
 
 /// Refresh pricing if the cache is stale (older than 24 hours).
@@ -394,10 +493,10 @@ mod tests {
         assert!(!is_priced(unknown));
         assert!(lookup(unknown).is_none());
         assert!(is_priced("claude-opus-4"));
-        // cost_of_turn collapses unknown to 0.0, which is exactly why is_priced
-        // must gate whether that 0.0 means "free" or "unknown".
-        assert!(cost_of_turn(unknown, 1_000_000, 1_000_000, 0, 0).abs() < f64::EPSILON);
-        assert!(cost_of_turn("claude-opus-4", 0, 0, 0, 0).abs() < f64::EPSILON);
+        assert_eq!(cost_of_turn(unknown, 1_000_000, 1_000_000, 0, 0), None);
+        // No tokens cost nothing, priced or not.
+        assert_eq!(cost_of_turn(unknown, 0, 0, 0, 0), Some(0.0));
+        assert_eq!(cost_of_turn("claude-opus-4", 0, 0, 0, 0), Some(0.0));
     }
 
     #[test]
@@ -427,19 +526,63 @@ mod tests {
     fn test_cost_of_turn_nonzero() {
         // Any Claude model should produce a nonzero cost for nonzero tokens
         let cost = cost_of_turn("claude-opus-4-6", 1_000_000, 100_000, 0, 0);
-        assert!(cost > 0.0);
+        assert!(cost.is_some_and(|cost| cost > 0.0));
     }
 
     #[test]
     fn test_cost_of_turn_with_cache_tokens() {
         let cost = cost_of_turn("claude-opus-4-6", 0, 0, 500_000, 1_000_000);
-        assert!(cost > 0.0);
+        assert!(cost.is_some_and(|cost| cost > 0.0));
     }
 
     #[test]
     fn test_cost_of_turn_unknown_model() {
         let cost = cost_of_turn("unknown-model", 1_000_000, 100_000, 0, 0);
-        assert!((cost - 0.0).abs() < f64::EPSILON);
+        assert_eq!(cost, None);
+    }
+
+    /// A price table is rebuilt when its cache file changes, and only then
+    /// (inkcast #252).
+    #[test]
+    fn a_price_table_is_rebuilt_when_its_cache_file_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache = dir.path().join("pricing.json");
+        let write = |model: &str, seconds: u64| {
+            std::fs::write(
+                &cache,
+                format!(r#"{{"{model}": {{"input_cost_per_token": 1e-06}}}}"#),
+            )
+            .unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&cache)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+                .unwrap();
+        };
+        let table = PriceTable::new();
+        write("claude-first-1", 1_000);
+        assert!(table.get(Some(&cache)).contains_key("claude-first-1"));
+
+        write("claude-second-1", 1_000);
+        table.reload_if_changed(Some(&cache));
+        assert!(
+            table.get(Some(&cache)).contains_key("claude-first-1"),
+            "an unchanged time keeps the table"
+        );
+
+        write("claude-second-1", 2_000);
+        table.reload_if_changed(Some(&cache));
+        let rebuilt = table.get(Some(&cache));
+        assert!(rebuilt.contains_key("claude-second-1"));
+        assert!(!rebuilt.contains_key("claude-first-1"));
+
+        std::fs::remove_file(&cache).unwrap();
+        table.reload_if_changed(Some(&cache));
+        assert!(
+            !table.get(Some(&cache)).contains_key("claude-second-1"),
+            "a removed cache leaves the embedded table"
+        );
     }
 
     #[test]

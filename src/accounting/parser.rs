@@ -435,8 +435,14 @@ pub struct IngestStats {
     pub turns_inserted: u64,
     /// Number of Droid turns inserted or updated.
     pub turns_updated: u64,
-    /// Total cost of newly-inserted Claude turns.
+    /// Total cost of newly-inserted turns whose model has a price.
     pub cost_usd: f64,
+    /// Newly-inserted Claude turns whose model has no price: their cost is
+    /// unknown, and not in `cost_usd` (inkcast #252).
+    pub unpriced_turns: u64,
+    /// Turns recorded unpriced earlier and priced by this ingest, their
+    /// model having gained a price.
+    pub turns_priced: u64,
     /// Total input + output tokens of newly-inserted Claude turns.
     pub tokens_consumed: u64,
     /// Per-source coverage information.
@@ -450,6 +456,8 @@ impl IngestStats {
             turns_inserted: 0,
             turns_updated: 0,
             cost_usd: 0.0,
+            unpriced_turns: 0,
+            turns_priced: 0,
             tokens_consumed: 0,
             coverage: Vec::new(),
         }
@@ -465,11 +473,14 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
     if gdb.newer_schema().is_some() {
         return IngestStats::empty();
     }
+    // Prices fetched by another process since this one read them apply.
+    pricing::reload_if_changed();
     let (files, mut had_errors) = find_session_files(home);
     let claude_sessions = files.len() as u64;
 
     let mut total_inserted = 0u64;
     let mut total_cost = 0.0f64;
+    let mut unpriced = 0u64;
     let mut total_tokens = 0u64;
 
     for file_path in &files {
@@ -568,7 +579,10 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
                         }
                         if gdb.insert_claude_turn(&line).await {
                             total_inserted += 1;
-                            total_cost += turn.cost_usd;
+                            match turn.cost_usd {
+                                Some(cost) => total_cost += cost,
+                                None => unpriced += 1,
+                            }
                             total_tokens += turn.input_tokens + turn.output_tokens;
                         } else {
                             // A later line of a message already recorded:
@@ -595,6 +609,16 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
         }
     }
 
+    // Last, so a turn inserted above whose model has a price by now is
+    // priced too.
+    let turns_priced = gdb
+        .price_unpriced_turns(pricing::lookup)
+        .await
+        .unwrap_or_else(|| {
+            had_errors = true;
+            0
+        });
+
     let claude_state = if had_errors {
         CoverageState::Partial
     } else if files.is_empty() {
@@ -607,6 +631,8 @@ pub(crate) async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> Inge
         turns_inserted: total_inserted,
         turns_updated: 0,
         cost_usd: total_cost,
+        unpriced_turns: unpriced,
+        turns_priced,
         tokens_consumed: total_tokens,
         coverage: vec![SourceCoverage {
             agent: "claude",
@@ -635,6 +661,7 @@ pub(crate) async fn ingest_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats
     let pi = ingest_pi_from_home(gdb, home).await;
     stats.turns_inserted += pi.turns_inserted;
     stats.cost_usd += pi.cost_usd;
+    stats.unpriced_turns += pi.unpriced_turns;
     stats.tokens_consumed += pi.tokens_consumed;
     stats.coverage.extend(pi.coverage);
 
@@ -655,6 +682,8 @@ async fn ingest_pi_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
         turns_inserted: pi.turns_inserted,
         turns_updated: 0,
         cost_usd: pi.cost_usd,
+        unpriced_turns: 0,
+        turns_priced: 0,
         tokens_consumed: pi.tokens_consumed,
         coverage: vec![pi.coverage],
     }
@@ -803,7 +832,7 @@ mod tests {
         assert_eq!(t.cache_read_tokens, 800);
         assert_eq!(t.category, "coding");
         assert_eq!(t.tool_names, "Edit");
-        assert!(t.cost_usd > 0.0);
+        assert!(t.cost_usd.is_some_and(|cost| cost > 0.0));
     }
 
     #[test]
@@ -1166,7 +1195,7 @@ mod tests {
             tool_names: row.get(0).unwrap(),
             category: row.get(1).unwrap(),
             output_tokens: row.get(2).unwrap(),
-            cost_usd: row.get(3).unwrap(),
+            cost_usd: row.get::<Option<f64>>(3).unwrap(),
             tool_use_ids: row.get(4).ok(),
             bash_signals: row.get(5).ok(),
             tool_result_tokens: row.get(6).unwrap(),
@@ -1178,7 +1207,7 @@ mod tests {
         tool_names: String,
         category: String,
         output_tokens: i64,
-        cost_usd: f64,
+        cost_usd: Option<f64>,
         tool_use_ids: Option<String>,
         bash_signals: Option<i64>,
         tool_result_tokens: i64,
@@ -1228,8 +1257,94 @@ mod tests {
         let turn = stored_turn(&db_tmp, "msg_s").await;
         assert_eq!(turn.output_tokens, 1200);
         let priced = pricing::cost_of_turn("claude-opus-4-6", 3, 1200, 0, 20);
-        assert!(priced > 0.0);
-        assert!((turn.cost_usd - priced).abs() < f64::EPSILON);
+        assert!(priced.is_some_and(|cost| cost > 0.0));
+        assert_eq!(turn.cost_usd, priced);
+    }
+
+    /// A turn whose model has no price is stored unpriced, `NULL`, not at
+    /// `$0`, and counted apart from the cost; a turn with no tokens costs
+    /// nothing whatever its model (inkcast #252).
+    #[tokio::test]
+    async fn a_turn_whose_model_has_no_price_is_stored_unpriced() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[
+            assistant_line("msg_u", 50, r#""end_turn""#, TEXT)
+                .replace("claude-opus-4-6", "claude-unpriced-zzz-2099"),
+            assistant_line("msg_p", 50, r#""end_turn""#, TEXT),
+            r#"{"type":"assistant","message":{"id":"msg_z","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0},"content":[]},"timestamp":"2026-10-27T04:00:00.000Z"}"#
+                .to_string(),
+        ]);
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        let priced = pricing::cost_of_turn("claude-opus-4-6", 3, 50, 0, 20);
+        assert!(priced.is_some_and(|cost| cost > 0.0));
+        assert_eq!(stored_turn(&db_tmp, "msg_u").await.cost_usd, None);
+        assert_eq!(stored_turn(&db_tmp, "msg_p").await.cost_usd, priced);
+        assert_eq!(stored_turn(&db_tmp, "msg_z").await.cost_usd, Some(0.0));
+        assert_eq!((stats.turns_inserted, stats.unpriced_turns), (3, 1));
+        assert_eq!(Some(stats.cost_usd), priced);
+    }
+
+    /// A later line of a message whose model has no price merges into its
+    /// turn as into any other: a NULL cost is a value, not a row that cannot
+    /// be read (inkcast #252).
+    #[tokio::test]
+    async fn a_later_line_merges_into_an_unpriced_turn() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let unpriced = |line: String| line.replace("claude-opus-4-6", "claude-unpriced-zzz-2099");
+        let (home, _) = session_home(&[
+            unpriced(assistant_line("msg_u", 8, "null", THINKING)),
+            unpriced(assistant_line(
+                "msg_u",
+                1200,
+                r#""tool_use""#,
+                &tool_use("toolu_e", "Edit", ""),
+            )),
+        ]);
+
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        let turn = stored_turn(&db_tmp, "msg_u").await;
+        assert_eq!(
+            (turn.tool_names.as_str(), turn.output_tokens, turn.cost_usd),
+            ("Edit", 1200, None)
+        );
+    }
+
+    /// An ingest prices a turn stored unpriced once its model has a price, as
+    /// when `pricing.json` gained it, from the tokens the row holds: the cost
+    /// the insert would have stored, to the bit (inkcast #252).
+    #[tokio::test]
+    async fn an_ingest_prices_a_turn_whose_model_gained_a_price() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[assistant_line("msg_p", 1234, r#""end_turn""#, TEXT)]);
+        ingest_claude_from_home(&gdb, home.path()).await;
+        let inserted = stored_turn(&db_tmp, "msg_p").await.cost_usd;
+        assert!(inserted.is_some_and(|cost| cost > 0.0));
+        // As a binary with no price for the model stored it.
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let db = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        db.connect()
+            .unwrap()
+            .execute("UPDATE turns SET cost_usd = NULL", ())
+            .await
+            .unwrap();
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!((stats.turns_inserted, stats.turns_priced), (0, 1));
+        let repriced = stored_turn(&db_tmp, "msg_p").await.cost_usd;
+        assert_eq!(
+            repriced.map(f64::to_bits),
+            inserted.map(f64::to_bits),
+            "{repriced:?} != {inserted:?}"
+        );
+        let again = ingest_claude_from_home(&gdb, home.path()).await;
+        assert_eq!(again.turns_priced, 0);
     }
 
     /// A file read again from its start (its offset lost) changes no turn:

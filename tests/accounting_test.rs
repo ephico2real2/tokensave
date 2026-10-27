@@ -28,7 +28,7 @@ fn claude_turn(id: &str, input: u64, output: u64) -> CostTurn {
         output_tokens: output,
         cache_write_tokens: 0,
         cache_read_tokens: 0,
-        cost_usd: 0.01,
+        cost_usd: Some(0.01),
         category: "exploration".to_string(),
         tool_names: "Read".to_string(),
         agent: "claude".to_string(),
@@ -48,7 +48,7 @@ fn droid_turn(id: &str, input: u64, output: u64, credits: Option<u64>) -> CostTu
         output_tokens: output,
         cache_write_tokens: 0,
         cache_read_tokens: 0,
-        cost_usd: 0.0,
+        cost_usd: Some(0.0),
         category: "exploration".to_string(),
         tool_names: "Read".to_string(),
         agent: "droid".to_string(),
@@ -800,4 +800,188 @@ async fn upsert_droid_preserves_known_credits_when_later_absent() {
     let droid = summaries.iter().find(|s| s.agent == "droid").unwrap();
     assert_eq!(droid.input_tokens, 200, "tokens should be updated");
     assert_eq!(droid.credits, Some(500), "known credits must be preserved");
+}
+
+/// A Claude turn of `model` stored unpriced (`cost_usd` NULL), as a turn whose
+/// model has no price is (inkcast #252).
+fn unpriced_turn(
+    id: &str,
+    model: &str,
+    (input, output, cache_write, cache_read): (u64, u64, u64, u64),
+) -> CostTurn {
+    CostTurn {
+        model: model.to_string(),
+        cache_write_tokens: cache_write,
+        cache_read_tokens: cache_read,
+        cost_usd: None,
+        ..claude_turn(id, input, output)
+    }
+}
+
+/// `cost_usd` of every turn, by `message_id`.
+async fn costs(tmp: &TempDir) -> std::collections::HashMap<String, Option<f64>> {
+    let conn = side_connection(&tmp.path().join(".tokensave").join("global.db")).await;
+    let mut rows = conn
+        .query("SELECT message_id, cost_usd FROM turns", ())
+        .await
+        .unwrap();
+    let mut costs = std::collections::HashMap::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        costs.insert(row.get(0).unwrap(), row.get::<Option<f64>>(1).unwrap());
+    }
+    costs
+}
+
+/// Turns stored unpriced are priced once their model has a price, from the
+/// tokens they hold: to the bit what `ModelPricing::cost` gives, as an insert
+/// stores. A priced turn, a turn of a model still unpriced and a Droid turn
+/// keep their cost, and a second pass prices nothing (inkcast #252).
+#[tokio::test]
+async fn unpriced_turns_are_priced_once_their_model_has_a_price() {
+    use tokensave::accounting::pricing::ModelPricing;
+
+    let tmp = TempDir::new().unwrap();
+    let db = open_isolated_db(&tmp).await;
+    // LiteLLM's per-token prices, converted as `parse_litellm_json` does.
+    let price = ModelPricing {
+        input_per_mtok: 5e-06 * 1_000_000.0,
+        output_per_mtok: 2.5e-05 * 1_000_000.0,
+        cache_write_per_mtok: 6.25e-06 * 1_000_000.0,
+        cache_read_per_mtok: 5e-07 * 1_000_000.0,
+    };
+    let tokens = [
+        (3, 1_234, 98_765, 1_234_567),
+        (987_654_321, 123_456_789, 55_555, 7),
+        (1, 0, 0, 0),
+    ];
+    for (i, &counts) in tokens.iter().enumerate() {
+        assert!(
+            db.insert_turn(&unpriced_turn(&format!("new-{i}"), "claude-new-1", counts))
+                .await
+        );
+    }
+    assert!(
+        db.insert_turn(&unpriced_turn("other", "claude-other-1", (3, 50, 0, 0)))
+            .await
+    );
+    let kept = CostTurn {
+        model: "claude-new-1".to_string(),
+        cost_usd: Some(0.25),
+        ..claude_turn("kept", 3, 50)
+    };
+    assert!(db.insert_turn(&kept).await);
+    assert!(db.insert_turn(&droid_turn("droid", 3, 50, Some(9))).await);
+    let lookup = |model: &str| (model == "claude-new-1").then_some(price);
+
+    assert_eq!(db.price_unpriced_turns(lookup).await, Some(3));
+
+    let costs = costs(&tmp).await;
+    for (i, &(input, output, cache_write, cache_read)) in tokens.iter().enumerate() {
+        let expected = price.cost(input, output, cache_write, cache_read);
+        assert_eq!(
+            costs[&format!("new-{i}")].map(f64::to_bits),
+            Some(expected.to_bits()),
+            "new-{i}: {:?} != {expected}",
+            costs[&format!("new-{i}")]
+        );
+    }
+    assert_eq!(costs["other"], None);
+    assert_eq!(costs["kept"], Some(0.25));
+    assert_eq!(costs["droid"], Some(0.0));
+    assert_eq!(db.price_unpriced_turns(lookup).await, Some(0));
+}
+
+/// Reports count the turns whose model has no price apart from the cost,
+/// which holds only the priced turns: never a `$0` for an unknown cost
+/// (inkcast #252).
+#[tokio::test]
+async fn reports_count_unpriced_turns_apart_from_the_cost() {
+    use tokensave::global_db::CostTotal;
+
+    let tmp = TempDir::new().unwrap();
+    let db = open_isolated_db(&tmp).await;
+    assert!(db.insert_turn(&claude_turn("priced", 100, 50)).await);
+    for id in ["unpriced-1", "unpriced-2"] {
+        assert!(
+            db.insert_turn(&unpriced_turn(id, "claude-new-1", (3, 50, 0, 0)))
+                .await
+        );
+    }
+    assert!(db.insert_turn(&droid_turn("droid", 3, 50, Some(9))).await);
+
+    assert_eq!(
+        db.total_cost_since(0).await,
+        Some(CostTotal {
+            usd: 0.01,
+            unpriced_turns: 2
+        })
+    );
+    assert_eq!(
+        db.cost_by_model_since(0).await,
+        vec![
+            (
+                "claude-opus-4-6".to_string(),
+                CostTotal {
+                    usd: 0.01,
+                    unpriced_turns: 0
+                },
+                150
+            ),
+            (
+                "claude-new-1".to_string(),
+                CostTotal {
+                    usd: 0.0,
+                    unpriced_turns: 2
+                },
+                106
+            ),
+        ]
+    );
+    assert_eq!(
+        db.cost_by_category_since(0).await,
+        vec![(
+            "exploration".to_string(),
+            CostTotal {
+                usd: 0.01,
+                unpriced_turns: 2
+            },
+            3
+        )]
+    );
+    let agents: Vec<(String, f64, u64)> = db
+        .cost_by_agent_since(0)
+        .await
+        .into_iter()
+        .map(|a| (a.agent, a.cost_usd, a.unpriced_turns))
+        .collect();
+    assert_eq!(
+        agents,
+        [
+            ("claude".to_string(), 0.01, 2),
+            ("droid".to_string(), 0.0, 0)
+        ]
+    );
+}
+
+/// The status row shows a day whose only turns have no price, rather than
+/// hiding it as a day with nothing spent (inkcast #252).
+#[tokio::test]
+async fn the_status_row_shows_a_day_of_unpriced_turns() {
+    let tmp = TempDir::new().unwrap();
+    let db = open_isolated_db(&tmp).await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let turn = CostTurn {
+        timestamp: now,
+        ..unpriced_turn("today", "claude-new-1", (3, 50, 0, 0))
+    };
+    assert!(db.insert_turn(&turn).await);
+
+    let row = tokensave::accounting::quick_cost_summary(&db, 0, 0)
+        .await
+        .expect("a row for a day of unpriced turns");
+    assert_eq!(row.today_cost.unpriced_turns, 1);
+    assert_eq!(row.week_cost.unpriced_turns, 1);
 }

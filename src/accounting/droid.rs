@@ -106,7 +106,7 @@ pub(crate) fn find_settings_files(root: &Path) -> Vec<PathBuf> {
 ///
 /// Negative token counters are clamped to zero. `thinkingTokens` is folded
 /// into `output_tokens`. `cache_creation_tokens` and `cache_read_tokens` are
-/// preserved in their own fields. `cost_usd` is always `0.0`. `credits` holds
+/// preserved in their own fields. `cost_usd` is always `Some(0.0)`. `credits` holds
 /// the exact `factoryCredits` value when it is non-negative; negative values
 /// are treated as absent.
 pub(crate) fn parse_settings_file(path: &Path) -> Result<Option<CostTurn>, ()> {
@@ -176,7 +176,7 @@ pub(crate) fn parse_settings_file(path: &Path) -> Result<Option<CostTurn>, ()> {
         output_tokens,
         cache_write_tokens,
         cache_read_tokens,
-        cost_usd: 0.0,
+        cost_usd: Some(0.0),
         category: "unclassified".to_string(),
         tool_names: String::new(),
         agent: "droid".to_string(),
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(turn.project_hash, "proj-abc");
         assert_eq!(turn.message_id, "droid:session1");
         assert_eq!(turn.model, "claude-opus-4");
-        assert!(turn.cost_usd.abs() < f64::EPSILON);
+        assert_eq!(turn.cost_usd, Some(0.0));
         assert_eq!(turn.category, "unclassified");
         assert!(turn.tool_names.is_empty());
     }

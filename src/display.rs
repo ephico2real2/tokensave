@@ -6,6 +6,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::global_db::CostTotal;
 use crate::types::GraphStats;
 
 /// Formats a token count as a compact string (e.g. "1.2M", "45.3k").
@@ -92,9 +93,39 @@ fn table_separator(
 
 /// Data for the cost row in the status header.
 pub struct CostRow {
-    pub today_cost: f64,
-    pub week_cost: f64,
+    pub today_cost: CostTotal,
+    pub week_cost: CostTotal,
     pub efficiency_pct: f64,
+}
+
+/// A cost as a report shows it: `$1.23`; `$1.23+` when it leaves out turns
+/// whose model had no price; `unpriced` when those are all it holds. A turn
+/// with no price never shows as `$0.00` (inkcast #252).
+pub fn format_cost(cost: CostTotal) -> String {
+    if cost.unpriced_turns == 0 {
+        format!("${:.2}", cost.usd)
+    } else if cost.is_unpriced() {
+        "unpriced".to_string()
+    } else {
+        format!("${:.2}+", cost.usd)
+    }
+}
+
+/// `1 unpriced turn`, `2 unpriced turns`.
+pub fn unpriced_turns(count: u64) -> String {
+    let noun = if count == 1 { "turn" } else { "turns" };
+    format!("{count} unpriced {noun}")
+}
+
+/// The line under a report whose costs leave out turns with no price, or
+/// `None` when none do.
+pub fn unpriced_note(count: u64) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "  + {}: their model had no price, so their cost is not included.",
+            unpriced_turns(count)
+        )
+    })
 }
 
 /// Prints only the header section of the status table (version, tokens, sync times).
@@ -426,11 +457,11 @@ fn print_project_row(project_root: &Path, inner_width: usize) {
 /// Print the cost summary row: today's cost, 7-day cost, efficiency ratio.
 fn print_cost_row(cost_info: &CostRow, inner_width: usize) {
     let mut parts = Vec::new();
-    if cost_info.today_cost >= 0.001 {
-        parts.push(format!("Today ${:.2}", cost_info.today_cost));
+    if !cost_info.today_cost.is_empty() {
+        parts.push(format!("Today {}", format_cost(cost_info.today_cost)));
     }
-    if cost_info.week_cost >= 0.001 {
-        parts.push(format!("7d ${:.2}", cost_info.week_cost));
+    if !cost_info.week_cost.is_empty() {
+        parts.push(format!("7d {}", format_cost(cost_info.week_cost)));
     }
     if cost_info.efficiency_pct > 0.0 {
         parts.push(format!("Efficiency {:.0}%", cost_info.efficiency_pct));
@@ -569,6 +600,38 @@ fn print_kind_rows(
             }
             print!("{}", if c < num_cols - 1 { "│" } else { "│\n" });
         }
+    }
+}
+
+#[cfg(test)]
+mod cost_format_tests {
+    use super::{format_cost, unpriced_note, CostTotal};
+
+    fn cost(usd: f64, unpriced_turns: u64) -> CostTotal {
+        CostTotal {
+            usd,
+            unpriced_turns,
+        }
+    }
+
+    /// A turn with no price never shows as `$0.00` (inkcast #252).
+    #[test]
+    fn a_cost_marks_the_turns_it_leaves_out() {
+        assert_eq!(format_cost(cost(1.234, 0)), "$1.23");
+        assert_eq!(format_cost(cost(0.0, 0)), "$0.00");
+        assert_eq!(format_cost(cost(1.234, 2)), "$1.23+");
+        assert_eq!(format_cost(cost(0.0, 2)), "unpriced");
+        assert_eq!(format_cost(cost(0.004, 2)), "unpriced");
+    }
+
+    #[test]
+    fn the_note_counts_the_unpriced_turns() {
+        assert_eq!(unpriced_note(0), None);
+        assert_eq!(
+            unpriced_note(1).as_deref(),
+            Some("  + 1 unpriced turn: their model had no price, so their cost is not included.")
+        );
+        assert!(unpriced_note(2).is_some_and(|note| note.contains("2 unpriced turns")));
     }
 }
 

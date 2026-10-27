@@ -52,7 +52,7 @@ Outbound connections are limited to:
 | `tokensave-counter.enzinol.workers.dev` | Aggregate token-saved counter | None | Silently ignored |
 | `raw.githubusercontent.com` | Fetch model pricing from [LiteLLM](https://github.com/BerriAI/litellm) | None (public file) | Falls back to embedded pricing |
 
-All best-effort network calls use short timeouts (1-5 seconds) and never block the CLI or MCP server. The pricing fetch (5s timeout) only runs during `tokensave cost` and is cached for 24 hours at `~/.tokensave/pricing.json`.
+All best-effort network calls use short timeouts (1-5 seconds) and never block the CLI or MCP server. The pricing fetch (5s timeout) only runs during `tokensave cost` and `tokensave gain` and is cached for 24 hours at `~/.tokensave/pricing.json`.
 
 ### No credentials or secrets
 

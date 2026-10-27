@@ -1072,7 +1072,10 @@ pub struct CostTurn {
     pub output_tokens: u64,
     pub cache_write_tokens: u64,
     pub cache_read_tokens: u64,
-    pub cost_usd: f64,
+    /// The USD cost; `None` when the model had no price as the turn was
+    /// recorded, which is unknown, not free (inkcast #252). Droid turns hold
+    /// `0.0`, their price being `credits`.
+    pub cost_usd: Option<f64>,
     pub category: String,
     pub tool_names: String,
     /// Source agent identity. Values include "claude" or "droid".

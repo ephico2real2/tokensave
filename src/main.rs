@@ -115,7 +115,8 @@ impl Drop for Spinner {
 /// Build the JSON object for one `by_agent` row.
 ///
 /// `cost_usd` is `null` for Droid (a credits-only agent with no USD pricing);
-/// it is a numeric value for all other agents.
+/// it is a numeric value for all other agents: the cost of the turns whose
+/// model has a price, `unpriced_turns` counting the others.
 /// All token fields and `credits` are always present.
 fn agent_row_json(a: &tokensave::global_db::AgentCostSummary) -> serde_json::Value {
     let cost_usd: serde_json::Value = if a.agent == "droid" {
@@ -126,6 +127,7 @@ fn agent_row_json(a: &tokensave::global_db::AgentCostSummary) -> serde_json::Val
     serde_json::json!({
         "agent": a.agent,
         "cost_usd": cost_usd,
+        "unpriced_turns": a.unpriced_turns,
         "credits": a.credits,
         "input_tokens": a.input_tokens,
         "output_tokens": a.output_tokens,
@@ -138,7 +140,9 @@ fn agent_row_json(a: &tokensave::global_db::AgentCostSummary) -> serde_json::Val
 /// Format one row of the `--by-agent` table.
 ///
 /// Columns: agent (left), USD (right), credits (right), raw tokens (right), rows (right).
-/// Droid USD is always "n/a"; other agents are formatted as `$X.XX`.
+/// Droid USD is always "n/a"; other agents as [`format_cost`] shows a cost.
+///
+/// [`format_cost`]: tokensave::display::format_cost
 /// Credits are formatted via `format_token_count` when present, or "n/a".
 fn format_agent_row(a: &tokensave::global_db::AgentCostSummary) -> String {
     let raw = a
@@ -154,7 +158,10 @@ fn format_agent_row(a: &tokensave::global_db::AgentCostSummary) -> String {
     let usd_str = if a.agent == "droid" {
         "n/a".to_string()
     } else {
-        format!("${:.2}", a.cost_usd)
+        tokensave::display::format_cost(tokensave::global_db::CostTotal {
+            usd: a.cost_usd,
+            unpriced_turns: a.unpriced_turns,
+        })
     };
     format!(
         "  {:<16} {:>9} {:>9} {:>12} {:>6}",
@@ -1648,6 +1655,12 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
             if changed > 0 {
                 eprintln!("Ingested or refreshed {} local accounting rows.", changed);
             }
+            if ingest_stats.turns_priced > 0 {
+                eprintln!(
+                    "Priced {} earlier turns whose model gained a price.",
+                    ingest_stats.turns_priced
+                );
+            }
 
             let since = tokensave::accounting::metrics::parse_range(&range);
             let droid_present = ingest_stats.coverage.iter().any(|coverage| {
@@ -1673,7 +1686,10 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                     "json" => {
                         let mut obj = serde_json::json!({
                             "range": range,
-                            "total_cost_usd": s.total_cost,
+                            // The priced turns' cost; `unpriced_turns` counts
+                            // those whose model had no price (inkcast #252).
+                            "total_cost_usd": s.total_cost.usd,
+                            "unpriced_turns": s.total_cost.unpriced_turns,
                             "total_input_tokens": s.total_input_tokens,
                             "total_output_tokens": s.total_output_tokens,
                             // Cache reads and writes are priced, and they dominate
@@ -1687,8 +1703,8 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                                 + s.total_cache_write_tokens,
                             "tokens_saved": s.tokens_saved,
                             "efficiency_ratio": s.efficiency_ratio,
-                            "by_model": s.by_model.iter().map(|(m, c, t)| serde_json::json!({"model": m, "cost": c, "tokens": t})).collect::<Vec<_>>(),
-                            "by_category": s.by_category.iter().map(|(cat, c, n)| serde_json::json!({"category": cat, "cost": c, "turns": n})).collect::<Vec<_>>(),
+                            "by_model": s.by_model.iter().map(|(m, c, t)| serde_json::json!({"model": m, "cost": c.usd, "unpriced_turns": c.unpriced_turns, "tokens": t})).collect::<Vec<_>>(),
+                            "by_category": s.by_category.iter().map(|(cat, c, n)| serde_json::json!({"category": cat, "cost": c.usd, "unpriced_turns": c.unpriced_turns, "turns": n})).collect::<Vec<_>>(),
                         });
                         if droid_present {
                             obj["by_agent"] = serde_json::json!(s
@@ -1702,7 +1718,7 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                     }
                     "csv" => {
                         if by_agent {
-                            println!("agent,cost_usd,credits,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,turns");
+                            println!("agent,cost_usd,credits,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,turns,unpriced_turns");
                             for a in &s.by_agent {
                                 let cost_cell = if a.agent == "droid" {
                                     String::new()
@@ -1714,7 +1730,7 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                                     None => String::new(),
                                 };
                                 println!(
-                                    "{},{},{},{},{},{},{},{}",
+                                    "{},{},{},{},{},{},{},{},{}",
                                     a.agent,
                                     cost_cell,
                                     credits_cell,
@@ -1723,29 +1739,34 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                                     a.cache_write_tokens,
                                     a.cache_read_tokens,
                                     a.turns,
+                                    a.unpriced_turns,
                                 );
                             }
                         } else if by_model {
-                            println!("model,cost_usd,tokens");
+                            println!("model,cost_usd,tokens,unpriced_turns");
                             for (model, cost, tokens) in &s.by_model {
-                                println!("{model},{cost:.4},{tokens}");
+                                println!(
+                                    "{model},{:.4},{tokens},{}",
+                                    cost.usd, cost.unpriced_turns
+                                );
                             }
                         } else if by_task {
-                            println!("category,cost_usd,turns");
+                            println!("category,cost_usd,turns,unpriced_turns");
                             for (cat, cost, turns) in &s.by_category {
-                                println!("{cat},{cost:.4},{turns}");
+                                println!("{cat},{:.4},{turns},{}", cost.usd, cost.unpriced_turns);
                             }
                         } else {
                             println!(
-                                "total_cost_usd,input_tokens,output_tokens,tokens_saved,efficiency"
+                                "total_cost_usd,input_tokens,output_tokens,tokens_saved,efficiency,unpriced_turns"
                             );
                             println!(
-                                "{:.4},{},{},{},{:.4}",
-                                s.total_cost,
+                                "{:.4},{},{},{},{:.4},{}",
+                                s.total_cost.usd,
                                 s.total_input_tokens,
                                 s.total_output_tokens,
                                 s.tokens_saved,
-                                s.efficiency_ratio
+                                s.efficiency_ratio,
+                                s.total_cost.unpriced_turns
                             );
                         }
                     }
@@ -1759,41 +1780,68 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                 for a in &s.by_agent {
                     println!("{}", format_agent_row(a));
                 }
+                if let Some(note) = tokensave::display::unpriced_note(s.total_cost.unpriced_turns) {
+                    println!("{note}");
+                }
                 if !coverage.is_empty() {
                     println!("{coverage}");
                 }
             } else if by_model {
-                let total = s.total_cost.max(0.001);
+                // Shares of the priced cost; an unpriced model has none.
+                let total = s.total_cost.usd.max(0.001);
                 println!(
                     "  {:<24} {:>10} {:>10} {:>6}",
                     "Model", "Cost", "Tokens", "Share"
                 );
+                let mut unpriced = 0;
                 for (model, cost, tokens) in &s.by_model {
-                    let share = cost / total * 100.0;
+                    unpriced += cost.unpriced_turns;
+                    let share = if cost.is_unpriced() {
+                        "n/a".to_string()
+                    } else {
+                        format!("{:.0}%", cost.usd / total * 100.0)
+                    };
                     let tok_str = tokensave::display::format_token_count(*tokens);
                     println!(
-                        "  {:<24} {:>9} {:>10} {:>5.0}%",
+                        "  {:<24} {:>9} {:>10} {:>6}",
                         model,
-                        format!("${cost:.2}"),
+                        tokensave::display::format_cost(*cost),
                         tok_str,
                         share
                     );
                 }
+                if let Some(note) = tokensave::display::unpriced_note(unpriced) {
+                    println!("{note}");
+                }
             } else if by_task {
                 println!("  {:<16} {:>10} {:>6}", "Category", "Cost", "Turns");
+                let mut unpriced = 0;
                 for (cat, cost, turns) in &s.by_category {
-                    println!("  {:<16} {:>9} {:>6}", cat, format!("${cost:.2}"), turns);
+                    unpriced += cost.unpriced_turns;
+                    println!(
+                        "  {:<16} {:>9} {:>6}",
+                        cat,
+                        tokensave::display::format_cost(*cost),
+                        turns
+                    );
+                }
+                if let Some(note) = tokensave::display::unpriced_note(unpriced) {
+                    println!("{note}");
                 }
             } else {
                 // Default summary
                 let today_since = tokensave::accounting::metrics::parse_range("today");
-                let today_cost = gdb.total_cost_since(today_since).await.unwrap_or(0.0);
+                let today_cost = gdb.total_cost_since(today_since).await.unwrap_or_default();
                 let today_breakdown = gdb
                     .token_breakdown_since(today_since)
                     .await
                     .unwrap_or((0, 0, 0, 0));
 
-                let fmt_row = |label: &str, cost: f64, input: u64, output: u64, cache_read: u64| {
+                let fmt_row = |label: &str,
+                               cost: tokensave::global_db::CostTotal,
+                               input: u64,
+                               output: u64,
+                               cache_read: u64| {
                     let input_s = tokensave::display::format_token_count(input);
                     let output_s = tokensave::display::format_token_count(output);
                     let cache_pct = if input + cache_read > 0 {
@@ -1804,7 +1852,7 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                     println!(
                         "  {:<10} {:>9} {:>10} {:>10} {:>9.0}%",
                         label,
-                        format!("${cost:.2}"),
+                        tokensave::display::format_cost(cost),
                         input_s,
                         output_s,
                         cache_pct
@@ -1829,6 +1877,9 @@ async fn run(cli: Cli) -> tokensave::errors::Result<()> {
                     s.total_output_tokens,
                     s.total_cache_read_tokens,
                 );
+                if let Some(note) = tokensave::display::unpriced_note(s.total_cost.unpriced_turns) {
+                    println!("{note}");
+                }
 
                 if s.tokens_saved > 0 {
                     let saved_str = tokensave::display::format_token_count(s.tokens_saved);
@@ -2373,6 +2424,7 @@ mod cost_tests {
         AgentCostSummary {
             agent: "droid".to_string(),
             cost_usd: 0.0,
+            unpriced_turns: 0,
             input_tokens: 1000,
             output_tokens: 500,
             cache_write_tokens: 200,
@@ -2388,6 +2440,7 @@ mod cost_tests {
         let a = AgentCostSummary {
             agent: "droid".to_string(),
             cost_usd: 0.0,
+            unpriced_turns: 0,
             input_tokens: 1000,
             output_tokens: 500,
             cache_write_tokens: 200,
@@ -2415,6 +2468,7 @@ mod cost_tests {
         let a = AgentCostSummary {
             agent: "claude".to_string(),
             cost_usd: 1.23,
+            unpriced_turns: 0,
             input_tokens: 100,
             output_tokens: 20,
             cache_write_tokens: 0,
@@ -2444,6 +2498,7 @@ mod cost_tests {
         let a = AgentCostSummary {
             agent: "claude".to_string(),
             cost_usd: 2.50,
+            unpriced_turns: 0,
             input_tokens: 500,
             output_tokens: 100,
             cache_write_tokens: 0,

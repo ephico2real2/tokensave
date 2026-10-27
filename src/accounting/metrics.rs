@@ -2,17 +2,17 @@
 
 use crate::accounting::parser::{CoverageState, SourceCoverage};
 use crate::display::{format_token_count, CostRow};
-use crate::global_db::{AgentCostSummary, GlobalDb};
+use crate::global_db::{AgentCostSummary, CostTotal, GlobalDb};
 
 /// Full cost summary with breakdowns.
 pub struct CostSummary {
-    pub total_cost: f64,
+    pub total_cost: CostTotal,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_cache_read_tokens: u64,
     pub total_cache_write_tokens: u64,
-    pub by_model: Vec<(String, f64, u64)>, // (model, cost, total_tokens)
-    pub by_category: Vec<(String, f64, u64)>, // (category, cost, turn_count)
+    pub by_model: Vec<(String, CostTotal, u64)>, // (model, cost, total_tokens)
+    pub by_category: Vec<(String, CostTotal, u64)>, // (category, cost, turn_count)
     pub tokens_saved: u64,
     pub efficiency_ratio: f64,
     pub by_agent: Vec<AgentCostSummary>,
@@ -45,7 +45,7 @@ pub async fn quick_cost_summary_with_droid_presence(
     let week_consumed = consumed_tokens(&by_agent, droid_present);
 
     // Don't show the row if there's no meaningful data
-    if today_cost < 0.001 && week_cost < 0.001 {
+    if today_cost.is_empty() && week_cost.is_empty() {
         return None;
     }
 
@@ -258,6 +258,7 @@ mod tests {
         AgentCostSummary {
             agent: agent.to_string(),
             cost_usd: 0.0,
+            unpriced_turns: 0,
             input_tokens: input,
             output_tokens: output,
             cache_write_tokens: cw,

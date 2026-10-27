@@ -163,7 +163,7 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<CostTu
         output_tokens,
         cache_write_tokens,
         cache_read_tokens,
-        cost_usd,
+        cost_usd: Some(cost_usd),
         category: category.as_str().to_string(),
         tool_names: tool_names.join(","),
         agent: "pi".to_string(),
@@ -264,7 +264,7 @@ pub(crate) async fn ingest_dir(gdb: &GlobalDb, root: &Path) -> PiIngestResult {
                     };
                     if gdb.insert_turn(&turn).await {
                         turns_inserted += 1;
-                        cost_usd += turn.cost_usd;
+                        cost_usd += turn.cost_usd.unwrap_or(0.0);
                         tokens_consumed += turn.input_tokens + turn.output_tokens;
                     }
                 }
@@ -330,7 +330,9 @@ mod tests {
         assert_eq!(turn.cache_read_tokens, 78);
         assert_eq!(turn.cache_write_tokens, 5);
         // Pi's own billed total, not a table lookup.
-        assert!((turn.cost_usd - 0.0123).abs() < f64::EPSILON);
+        assert!(turn
+            .cost_usd
+            .is_some_and(|cost| (cost - 0.0123).abs() < f64::EPSILON));
         assert_eq!(turn.category, "exploration");
         assert_eq!(turn.tool_names, "read");
         assert!(turn.timestamp > 1_700_000_000);

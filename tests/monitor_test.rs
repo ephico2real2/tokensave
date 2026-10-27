@@ -1,6 +1,7 @@
 use std::path::Path;
 use tempfile::TempDir;
 use tokensave::accounting::CoverageState;
+use tokensave::global_db::CostTotal;
 use tokensave::monitor::{cost_panel_lines, CostCache};
 
 /// Helper: write an entry to a specific mmap dir.
@@ -194,10 +195,18 @@ fn test_different_prefixes() {
 
 // ── cost_panel_lines tests ────────────────────────────────────────────
 
+/// A cost with no unpriced turns.
+fn usd(usd: f64) -> CostTotal {
+    CostTotal {
+        usd,
+        unpriced_turns: 0,
+    }
+}
+
 fn base_cache() -> CostCache {
     CostCache {
-        today_cost: 0.0,
-        week_cost: 0.0,
+        today_cost: CostTotal::default(),
+        week_cost: CostTotal::default(),
         tokens_saved: 0,
         efficiency_pct: 0.0,
         top_model: String::new(),
@@ -364,8 +373,8 @@ fn partial_global_with_missing_window_credits_renders_na() {
 #[test]
 fn complete_droid_source_without_week_usage_is_not_partial() {
     let cache = CostCache {
-        today_cost: 1.0,
-        week_cost: 2.0,
+        today_cost: usd(1.0),
+        week_cost: usd(2.0),
         droid_state: CoverageState::Complete,
         ..base_cache()
     };
@@ -394,8 +403,8 @@ fn complete_droid_source_with_tokens_and_no_credits_is_not_partial() {
 #[test]
 fn droid_absent_preserves_legacy_monitor_lines() {
     let cache = CostCache {
-        today_cost: 1.23,
-        week_cost: 5.67,
+        today_cost: usd(1.23),
+        week_cost: usd(5.67),
         tokens_saved: 100_000,
         efficiency_pct: 25.0,
         top_model: "claude-opus-4".to_string(),
@@ -444,4 +453,28 @@ fn truncation_noop_when_within_limit() {
     let line = "short";
     let truncated = truncate_to_chars(line, 80);
     assert_eq!(truncated, line);
+}
+
+/// Turns whose model has no price are shown as such, never as `$0.00`, and
+/// count as activity on their own (inkcast #252).
+#[test]
+fn unpriced_turns_show_as_unpriced() {
+    let cache = CostCache {
+        today_cost: CostTotal {
+            usd: 0.0,
+            unpriced_turns: 3,
+        },
+        week_cost: CostTotal {
+            usd: 5.67,
+            unpriced_turns: 3,
+        },
+        tokens_saved: 100_000,
+        ..base_cache()
+    };
+    assert!(cache.has_activity());
+    let lines = cost_panel_lines(&cache);
+    assert_eq!(
+        lines[0],
+        "  Spent: unpriced today | $5.67+ 7d    Saved: 100.0k"
+    );
 }

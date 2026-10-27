@@ -2522,11 +2522,42 @@ async fn print_session_receipt(stats: &crate::accounting::IngestStats) {
 
     // Print to stderr so it appears in the terminal but doesn't interfere
     // with stdout (which Claude Code may parse).
-    if stats.cost_usd >= 0.001 {
+    if let Some(spent) = receipt_spent(stats.cost_usd, stats.unpriced_turns) {
         eprintln!(
-            "\x1b[36mSession: ${:.2} spent | {saved_str} saved | {efficiency:.0}% efficiency\x1b[0m",
-            stats.cost_usd
+            "\x1b[36mSession: {spent} | {saved_str} saved | {efficiency:.0}% efficiency\x1b[0m"
         );
+    }
+}
+
+/// What a session receipt says was spent, or `None` for nothing to report.
+/// Turns whose model had no price are counted, never shown as `$0.00`
+/// (inkcast #252).
+fn receipt_spent(cost_usd: f64, unpriced_turns: u64) -> Option<String> {
+    let unpriced = crate::display::unpriced_turns(unpriced_turns);
+    match (cost_usd >= 0.001, unpriced_turns) {
+        (false, 0) => None,
+        (true, 0) => Some(format!("${cost_usd:.2} spent")),
+        (true, _) => Some(format!("${cost_usd:.2} spent + {unpriced}")),
+        (false, _) => Some(unpriced),
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::receipt_spent;
+
+    /// A session's unpriced turns are counted, never shown as `$0.00`
+    /// (inkcast #252).
+    #[test]
+    fn a_receipt_counts_unpriced_turns() {
+        assert_eq!(receipt_spent(0.0, 0), None);
+        assert_eq!(receipt_spent(0.0004, 0), None);
+        assert_eq!(receipt_spent(1.5, 0).as_deref(), Some("$1.50 spent"));
+        assert_eq!(
+            receipt_spent(1.5, 2).as_deref(),
+            Some("$1.50 spent + 2 unpriced turns")
+        );
+        assert_eq!(receipt_spent(0.0, 1).as_deref(), Some("1 unpriced turn"));
     }
 }
 

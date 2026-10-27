@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use libsql::{params, Builder, Connection, Database as LibsqlDatabase, TransactionBehavior};
 
 use crate::accounting::classifier::BashSignals;
+use crate::accounting::pricing::ModelPricing;
 use crate::accounting::turn_merge::{merge_line, ClaudeLine, TurnState};
 
 /// Total savings + call count for a project (or all projects when `project` is None).
@@ -27,11 +28,46 @@ pub struct SavingsDay {
     pub calls: u64,
 }
 
+/// A sum of turn costs, and how many turns it leaves out because their model
+/// had no price: their cost is unknown, so it is neither in `usd` nor read as
+/// zero (inkcast #252).
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize)]
+pub struct CostTotal {
+    /// The USD cost of the priced turns.
+    pub usd: f64,
+    pub unpriced_turns: u64,
+}
+
+impl CostTotal {
+    /// Whether there is anything to show: a cost, or turns with none.
+    pub fn is_empty(&self) -> bool {
+        self.usd < 0.001 && self.unpriced_turns == 0
+    }
+
+    /// Whether the only cost to show is unknown: turns with no price, and
+    /// none priced above what rounds to `$0.00`.
+    pub fn is_unpriced(&self) -> bool {
+        self.unpriced_turns > 0 && self.usd < 0.005
+    }
+
+    /// The `CostTotal` of a query row whose columns `usd` and `unpriced` are
+    /// `COALESCE(SUM(cost_usd), 0.0)` and `COUNT(*) - COUNT(cost_usd)`.
+    fn of_row(row: &libsql::Row, usd: i32, unpriced: i32) -> Self {
+        Self {
+            usd: row.get::<f64>(usd).unwrap_or(0.0),
+            unpriced_turns: row.get::<i64>(unpriced).unwrap_or(0).max(0) as u64,
+        }
+    }
+}
+
 /// Per-agent cost summary returned by `cost_by_agent_since`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentCostSummary {
     pub agent: String,
+    /// The USD cost of the agent's priced turns.
     pub cost_usd: f64,
+    /// The agent's turns whose model had no price (inkcast #252).
+    pub unpriced_turns: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_write_tokens: u64,
@@ -750,7 +786,7 @@ impl GlobalDb {
             output_tokens: count(2)?,
             cache_write_tokens: count(3)?,
             cache_read_tokens: count(4)?,
-            cost_usd: row.get(5).ok()?,
+            cost_usd: row.get::<Option<f64>>(5).ok()?,
             category: row.get(6).ok()?,
             tool_names: row.get(7).ok()?,
             tool_use_ids: row.get(8).ok(),
@@ -926,6 +962,81 @@ impl GlobalDb {
             changed += rows;
         }
         Some(changed)
+    }
+
+    /// Prices the Claude turns recorded with no price (`cost_usd IS NULL`)
+    /// whose model `price` now prices, from the tokens each row holds: one
+    /// `UPDATE` per model, all in one `BEGIN IMMEDIATE` transaction. A priced
+    /// row is never changed. Returns the rows priced, or `None` on a database
+    /// error (inkcast #252).
+    ///
+    /// The models are read first without a lock: most ingests find none that
+    /// gained a price, and take no write lock.
+    pub async fn price_unpriced_turns(
+        &self,
+        price: impl Fn(&str) -> Option<ModelPricing>,
+    ) -> Option<u64> {
+        let mut priced = Vec::new();
+        {
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT DISTINCT model FROM turns
+                     WHERE cost_usd IS NULL AND agent = 'claude'",
+                    (),
+                )
+                .await
+                .ok()?;
+            while let Some(row) = rows.next().await.ok()? {
+                let model: String = row.get(0).ok()?;
+                if let Some(pricing) = price(&model) {
+                    priced.push((model, pricing));
+                }
+            }
+        }
+        if priced.is_empty() {
+            return Some(0);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .ok()?;
+        let mut changed = Some(0);
+        for (model, pricing) in &priced {
+            // `ModelPricing::cost`, term by term in its order, so the cost is
+            // the one an insert stores.
+            let Ok(rows) = tx
+                .execute(
+                    "UPDATE turns SET cost_usd =
+                         (input_tokens / 1000000.0) * ?2
+                         + (output_tokens / 1000000.0) * ?3
+                         + (cache_write_tokens / 1000000.0) * ?4
+                         + (cache_read_tokens / 1000000.0) * ?5
+                     WHERE model = ?1 AND agent = 'claude' AND cost_usd IS NULL",
+                    params![
+                        model.as_str(),
+                        pricing.input_per_mtok,
+                        pricing.output_per_mtok,
+                        pricing.cache_write_per_mtok,
+                        pricing.cache_read_per_mtok
+                    ],
+                )
+                .await
+            else {
+                changed = None;
+                break;
+            };
+            changed = changed.map(|n| n + rows);
+        }
+        let Some(rows) = changed else {
+            // Rolled back here so the outcome is not left to `Drop`; if the
+            // ROLLBACK itself fails, libsql's `Drop` panics either way.
+            let _ = tx.rollback().await;
+            return None;
+        };
+        tx.commit().await.ok()?;
+        Some(rows)
     }
 
     /// Records a subagent run, replacing the stored row: its `.meta.json` is
@@ -1115,18 +1226,19 @@ impl GlobalDb {
             .is_ok_and(|n| n > 0)
     }
 
-    /// Total cost in USD since a given unix timestamp.
-    pub async fn total_cost_since(&self, since: u64) -> Option<f64> {
+    /// Total cost since a given unix timestamp.
+    pub async fn total_cost_since(&self, since: u64) -> Option<CostTotal> {
         let mut rows = self
             .conn
             .query(
-                "SELECT COALESCE(SUM(cost_usd), 0.0) FROM turns WHERE timestamp >= ?1",
+                "SELECT COALESCE(SUM(cost_usd), 0.0), COUNT(*) - COUNT(cost_usd)
+                 FROM turns WHERE timestamp >= ?1",
                 params![since as i64],
             )
             .await
             .ok()?;
         let row = rows.next().await.ok()??;
-        Some(row.get::<f64>(0).unwrap_or(0.0))
+        Some(CostTotal::of_row(&row, 0, 1))
     }
 
     /// Total input + output tokens since a given unix timestamp.
@@ -1168,19 +1280,20 @@ impl GlobalDb {
     }
 
     /// Cost grouped by model since a given timestamp. Claude-only.
-    /// Returns `(model, cost, total_tokens)`.
+    /// Returns `(model, cost, total_tokens)`, the highest priced cost first.
     ///
     /// `total_tokens` counts every category the cost was computed from, cache
     /// reads and cache writes included (#472). Summing only uncached input and
     /// output implied a price per million several times any published rate,
     /// because agent traffic is dominated by the cached context resent each
     /// turn — priced, but previously uncounted.
-    pub async fn cost_by_model_since(&self, since: u64) -> Vec<(String, f64, u64)> {
+    pub async fn cost_by_model_since(&self, since: u64) -> Vec<(String, CostTotal, u64)> {
         let Ok(mut rows) = self
             .conn
             .query(
-                "SELECT model, SUM(cost_usd),
-                        SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens)
+                "SELECT model, COALESCE(SUM(cost_usd), 0.0),
+                        SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens),
+                        COUNT(*) - COUNT(cost_usd)
                  FROM turns WHERE timestamp >= ?1 AND agent = 'claude'
                  GROUP BY model ORDER BY SUM(cost_usd) DESC",
                 params![since as i64],
@@ -1192,20 +1305,20 @@ impl GlobalDb {
         let mut out = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
             let model: String = row.get(0).unwrap_or_default();
-            let cost: f64 = row.get(1).unwrap_or(0.0);
             let tokens: i64 = row.get(2).unwrap_or(0);
-            out.push((model, cost, tokens as u64));
+            out.push((model, CostTotal::of_row(&row, 1, 3), tokens as u64));
         }
         out
     }
 
     /// Cost grouped by category since a given timestamp. Claude-only.
-    /// Returns `(category, cost, turn_count)`.
-    pub async fn cost_by_category_since(&self, since: u64) -> Vec<(String, f64, u64)> {
+    /// Returns `(category, cost, turn_count)`, the highest priced cost first.
+    pub async fn cost_by_category_since(&self, since: u64) -> Vec<(String, CostTotal, u64)> {
         let Ok(mut rows) = self
             .conn
             .query(
-                "SELECT category, SUM(cost_usd), COUNT(*)
+                "SELECT category, COALESCE(SUM(cost_usd), 0.0), COUNT(*),
+                        COUNT(*) - COUNT(cost_usd)
                  FROM turns WHERE timestamp >= ?1 AND agent = 'claude'
                  GROUP BY category ORDER BY SUM(cost_usd) DESC",
                 params![since as i64],
@@ -1217,9 +1330,8 @@ impl GlobalDb {
         let mut out = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
             let cat: String = row.get(0).unwrap_or_default();
-            let cost: f64 = row.get(1).unwrap_or(0.0);
             let count: i64 = row.get(2).unwrap_or(0);
-            out.push((cat, cost, count as u64));
+            out.push((cat, CostTotal::of_row(&row, 1, 3), count as u64));
         }
         out
     }
@@ -1273,7 +1385,8 @@ impl GlobalDb {
                         COALESCE(SUM(cache_write_tokens), 0),
                         COALESCE(SUM(cache_read_tokens), 0),
                         CASE WHEN COUNT(credits) = COUNT(*) THEN SUM(credits) ELSE NULL END,
-                        COUNT(*)
+                        COUNT(*),
+                        COUNT(*) - COUNT(cost_usd)
                  FROM turns WHERE timestamp >= ?1
                  GROUP BY agent ORDER BY agent",
                 params![since as i64],
@@ -1285,7 +1398,7 @@ impl GlobalDb {
         let mut out = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
             let agent: String = row.get(0).unwrap_or_default();
-            let cost_usd: f64 = row.get(1).unwrap_or(0.0);
+            let cost = CostTotal::of_row(&row, 1, 8);
             let input_tokens: i64 = row.get(2).unwrap_or(0);
             let output_tokens: i64 = row.get(3).unwrap_or(0);
             let cache_write_tokens: i64 = row.get(4).unwrap_or(0);
@@ -1294,7 +1407,8 @@ impl GlobalDb {
             let turns: i64 = row.get(7).unwrap_or(0);
             out.push(AgentCostSummary {
                 agent,
-                cost_usd,
+                cost_usd: cost.usd,
+                unpriced_turns: cost.unpriced_turns,
                 input_tokens: input_tokens.max(0) as u64,
                 output_tokens: output_tokens.max(0) as u64,
                 cache_write_tokens: cache_write_tokens.max(0) as u64,
