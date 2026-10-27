@@ -385,6 +385,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: AccountingAction,
     },
+    /// Record Cursor usage, fetched from Cursor's servers when you run it
+    Cursor {
+        #[command(subcommand)]
+        action: CursorAction,
+    },
     /// Find navigation turns a tokensave query could have served more cheaply
     Discover {
         /// Time range: "today", "7d", "30d", "month", or "all"
@@ -599,6 +604,37 @@ pub enum AccountingAction {
         /// Count what would be filled, and write nothing
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CursorAction {
+    /// Fetch your Cursor usage events and record them as turns
+    ///
+    /// Cursor keeps no token counts on disk, so they are fetched from
+    /// Cursor, and only by this command: never by a hook, the MCP server or
+    /// `tokensave cost`. The source is the Admin API when a key is set in
+    /// TOKENSAVE_CURSOR_ADMIN_KEY or in the `cursor-admin-key` file of
+    /// tokensave's data folder (mode 600; Teams and Enterprise plans), else
+    /// the Cursor app's own login with --use-login. The login source calls
+    /// the endpoint Cursor's dashboard uses, which is undocumented; Cursor's
+    /// terms (section 1.5) restrict extracting data from the service.
+    ///
+    /// Fetches from an hour before the newest recorded Cursor event, or all
+    /// history the first time. A credential is never printed or stored.
+    Sync {
+        /// Fetch from this date (YYYY-MM-DD, UTC) instead
+        #[arg(long)]
+        since: Option<String>,
+        /// Fetch and count, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Use the Cursor app's login when no Admin API key is set
+        #[arg(long)]
+        use_login: bool,
+        /// With an Admin API key: only this user's events
+        #[arg(long)]
+        email: Option<String>,
     },
 }
 

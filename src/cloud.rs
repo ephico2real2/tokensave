@@ -121,6 +121,22 @@ pub fn agent_with_timeout(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
+/// Creates a ureq agent like [`agent_with_timeout`] that follows no redirect.
+///
+/// For requests that carry a credential: following a redirect resends the
+/// request, its headers included, to wherever the response points. A 3xx is
+/// returned to the caller instead.
+pub fn agent_without_redirects(timeout: Duration) -> ureq::Agent {
+    use ureq::tls::TlsConfig;
+
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .max_redirects(0)
+        .tls_config(TlsConfig::builder().root_certs(root_certs()).build())
+        .build()
+        .into()
+}
+
 /// How long a successful upload holds off the next one: once a day.
 ///
 /// The counter is a single global sum, so nothing about it needs a finer
