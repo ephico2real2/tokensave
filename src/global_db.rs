@@ -283,11 +283,11 @@ impl GlobalDb {
 
     /// Sets the connection's PRAGMAs, retrying a lock error.
     ///
-    /// busy_timeout first: `journal_mode = WAL` takes a lock, and before the
+    /// `busy_timeout` first: `journal_mode = WAL` takes a lock, and before the
     /// timeout is set a concurrent open fails at once with "database is
     /// locked" (5 to 9 of 160 simultaneous opens) instead of waiting. The
     /// timeout does not cover every case: SQLite skips the busy handler where
-    /// waiting could deadlock (sqlite.org/c3ref/busy_handler.html), as when a
+    /// waiting could deadlock (<https://sqlite.org/c3ref/busy_handler.html>), as when a
     /// new file is first switched to WAL by one connection while others hold
     /// a read lock (1 of 80 simultaneous first opens). The batch is
     /// idempotent, so that error is retried.
