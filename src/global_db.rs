@@ -329,8 +329,13 @@ impl GlobalDb {
         .await
         .ok()?;
 
-        // Migrate existing DBs: add agent/credits columns if absent.
-        Self::migrate_turns_columns(&conn).await;
+        // Migrate existing DBs: add the `turns` columns they lack. A failed
+        // migration fails the open: `insert_turn` names the added columns, so
+        // it would fail on every turn while the parser still advanced its
+        // offsets. The next open retries.
+        if !Self::migrate_turns_columns(&conn).await {
+            return None;
+        }
         Self::migrate_project_paths(&conn).await;
 
         Some(Self { conn, _db: db })
@@ -344,28 +349,14 @@ impl GlobalDb {
     }
 
     /// Add `agent`, `credits`, `tool_result_tokens` and the
-    /// [`TURN_DETAIL_COLUMNS`] to an existing turns table if absent.
-    /// Best-effort: failures are silently ignored (matches `open_at` pattern).
-    async fn migrate_turns_columns(conn: &Connection) {
-        let Ok(mut rows) = conn.query("PRAGMA table_info(turns)", ()).await else {
-            return;
+    /// [`TURN_DETAIL_COLUMNS`] to an existing turns table if absent. Returns
+    /// whether every one of them is there afterwards.
+    async fn migrate_turns_columns(conn: &Connection) -> bool {
+        let Some(present) = Self::turns_columns(conn).await else {
+            return false;
         };
-        let mut has_agent = false;
-        let mut has_credits = false;
-        let mut has_tool_result_tokens = false;
-        let mut present: Vec<String> = Vec::new();
-        while let Ok(Some(row)) = rows.next().await {
-            if let Ok(name) = row.get::<String>(1) {
-                match name.as_str() {
-                    "agent" => has_agent = true,
-                    "credits" => has_credits = true,
-                    "tool_result_tokens" => has_tool_result_tokens = true,
-                    _ => {}
-                }
-                present.push(name);
-            }
-        }
-        if !has_agent {
+        let has = |column: &str| present.iter().any(|name| name == column);
+        if !has("agent") {
             let _ = conn
                 .execute(
                     "ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'",
@@ -373,12 +364,12 @@ impl GlobalDb {
                 )
                 .await;
         }
-        if !has_credits {
+        if !has("credits") {
             let _ = conn
                 .execute("ALTER TABLE turns ADD COLUMN credits INTEGER", ())
                 .await;
         }
-        if !has_tool_result_tokens {
+        if !has("tool_result_tokens") {
             // Backfilled as 0 rather than recomputed: the figure comes from
             // transcript lines this database does not keep, and re-reading
             // every session to fill history in would cost more than the metric
@@ -393,7 +384,7 @@ impl GlobalDb {
         // Turn detail (who ran the turn and how). Left NULL on rows parsed
         // before, for the reason given for `tool_result_tokens` above.
         for (column, ddl) in TURN_DETAIL_COLUMNS {
-            if !present.iter().any(|name| name == column) {
+            if !has(column) {
                 let _ = conn.execute(ddl, ()).await;
             }
         }
@@ -405,6 +396,25 @@ impl GlobalDb {
                 (),
             )
             .await;
+        // An ALTER also fails when a concurrent open added the column first,
+        // so its result is not the test: the column being there now is.
+        // Column names compare as SQLite compares them, ignoring ASCII case.
+        Self::turns_columns(conn).await.is_some_and(|now| {
+            ["agent", "credits", "tool_result_tokens"]
+                .into_iter()
+                .chain(TURN_DETAIL_COLUMNS.map(|(column, _)| column))
+                .all(|column| now.iter().any(|name| name.eq_ignore_ascii_case(column)))
+        })
+    }
+
+    /// The names of the `turns` columns, or `None` when they cannot be read.
+    async fn turns_columns(conn: &Connection) -> Option<Vec<String>> {
+        let mut rows = conn.query("PRAGMA table_info(turns)", ()).await.ok()?;
+        let mut names = Vec::new();
+        while let Some(row) = rows.next().await.ok()? {
+            names.push(row.get::<String>(1).ok()?);
+        }
+        Some(names)
     }
 
     /// Rewrites pre-existing project keys to their canonical form, once per DB.
@@ -715,6 +725,38 @@ impl GlobalDb {
                     turn.detail.service_tier.clone(),
                     turn.detail.git_branch.clone(),
                     turn.detail.run_id.clone(),
+                ],
+            )
+            .await
+            .is_ok_and(|n| n > 0)
+    }
+
+    /// Fills the usage fields a recorded turn lacks from a later line of the
+    /// same message. Claude Code writes a subagent message's first line while
+    /// it streams, before its `speed` and thinking tokens are known, and the
+    /// finished line after it (2,826 of 41,999 subagent messages, 2026-10-27).
+    /// Never overwrites a value; tokens and cost stay as the first line set
+    /// them. Writes nothing unless a column is filled.
+    pub async fn fill_turn_usage(
+        &self,
+        message_id: &str,
+        detail: &crate::types::TurnDetail,
+    ) -> bool {
+        self.conn
+            .execute(
+                "UPDATE turns SET
+                     thinking_tokens = COALESCE(thinking_tokens, ?2),
+                     speed           = COALESCE(speed, ?3),
+                     service_tier    = COALESCE(service_tier, ?4)
+                 WHERE message_id = ?1
+                   AND ((thinking_tokens IS NULL AND ?2 IS NOT NULL)
+                     OR (speed IS NULL AND ?3 IS NOT NULL)
+                     OR (service_tier IS NULL AND ?4 IS NOT NULL))",
+                params![
+                    message_id.to_string(),
+                    detail.thinking_tokens.map(|t| t as i64),
+                    detail.speed.clone(),
+                    detail.service_tier.clone(),
                 ],
             )
             .await

@@ -179,6 +179,87 @@ async fn legacy_migration_adds_turn_detail_columns() {
     assert_eq!(db.turn_detail("new-1").await, Some(turn.detail));
 }
 
+/// A migration that cannot add a column must not hand out the database:
+/// every `insert_turn` would fail while the parser still advanced its offsets,
+/// losing those turns for good. The next open retries the migration.
+#[tokio::test]
+async fn a_failed_migration_does_not_open_the_database() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+    let conn = side.connect().unwrap();
+    // A 7.16 table padded to 1,998 columns: SQLite allows 2,000, so the third
+    // ALTER fails, as one that loses its lock past the busy timeout would.
+    let padding: String = (0..1983).map(|i| format!(", pad{i} INTEGER")).collect();
+    conn.execute_batch(&format!(
+        "CREATE TABLE turns (
+             message_id TEXT PRIMARY KEY, project_hash TEXT NOT NULL,
+             session_id TEXT NOT NULL, model TEXT NOT NULL,
+             timestamp INTEGER NOT NULL, input_tokens INTEGER NOT NULL,
+             output_tokens INTEGER NOT NULL,
+             cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+             cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+             cost_usd REAL NOT NULL, category TEXT NOT NULL,
+             tool_names TEXT NOT NULL DEFAULT '',
+             agent TEXT NOT NULL DEFAULT 'claude', credits INTEGER,
+             tool_result_tokens INTEGER NOT NULL DEFAULT 0{padding}
+         )"
+    ))
+    .await
+    .unwrap();
+
+    assert!(
+        GlobalDb::open_at(&db_path).await.is_none(),
+        "a half-migrated database is not opened"
+    );
+
+    for i in 0..10 {
+        conn.execute(&format!("ALTER TABLE turns DROP COLUMN pad{i}"), ())
+            .await
+            .unwrap();
+    }
+    let db = GlobalDb::open_at(&db_path)
+        .await
+        .expect("the next open completes the migration");
+    assert!(db.insert_turn(&claude_turn("after", 1, 2)).await);
+}
+
+/// An ALTER that fails because the column is already there (a concurrent
+/// open added it first) still opens the database. A column named in another
+/// case is the same column to SQLite, and makes that ALTER fail every time.
+#[tokio::test]
+async fn a_column_added_elsewhere_still_opens_the_database() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+    side.connect()
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE turns (
+                 message_id TEXT PRIMARY KEY, project_hash TEXT NOT NULL,
+                 session_id TEXT NOT NULL, model TEXT NOT NULL,
+                 timestamp INTEGER NOT NULL, input_tokens INTEGER NOT NULL,
+                 output_tokens INTEGER NOT NULL,
+                 cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                 cost_usd REAL NOT NULL, category TEXT NOT NULL,
+                 tool_names TEXT NOT NULL DEFAULT '',
+                 agent TEXT NOT NULL DEFAULT 'claude', credits INTEGER,
+                 tool_result_tokens INTEGER NOT NULL DEFAULT 0,
+                 Effort TEXT
+             )",
+        )
+        .await
+        .unwrap();
+
+    let db = GlobalDb::open_at(&db_path)
+        .await
+        .expect("an existing column is a completed migration");
+    assert!(db.insert_turn(&claude_turn("t1", 1, 2)).await);
+}
+
 /// cost_by_agent_since groups by agent and returns all AgentCostSummary fields.
 /// Droid cost is 0.0 and credits are exact when all rows have them.
 #[tokio::test]

@@ -262,29 +262,36 @@ fn parse_agent_run(meta: &str, transcript: &Path, project_hash: &str) -> Option<
 
 /// Records the run behind a subagent transcript from its `.meta.json`, when
 /// that file changed since the last ingest (`finished` is written late).
-/// Returns `true` when reading it failed, for the source's coverage.
+/// Returns `true` when reading or recording it failed, for the source's
+/// coverage; the next ingest then tries again.
 async fn ingest_agent_run(gdb: &GlobalDb, transcript: &Path, project_hash: &str) -> bool {
     let meta_path = transcript.with_extension("meta.json");
     let Ok(meta) = fs::metadata(&meta_path) else {
         // Older Claude Code builds wrote no `.meta.json`: nothing to record.
         return false;
     };
+    // Length and mtime in nanoseconds: the rewrite that sets `finished` can
+    // land in the same second as an earlier read, and whole seconds would
+    // hide it for good.
+    let len = meta.len();
     let mtime = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs());
+        .map_or(0, |d| d.as_nanos() as u64);
     let key = meta_path.to_string_lossy().to_string();
-    if gdb.get_parse_offset(&key).await.map(|(_, m)| m) == Some(mtime) {
+    if gdb.get_parse_offset(&key).await == Some((len, mtime)) {
         return false;
     }
     let Ok(text) = fs::read_to_string(&meta_path) else {
         return true;
     };
     if let Some(run) = parse_agent_run(&text, transcript, project_hash) {
-        gdb.upsert_agent_run(&run).await;
+        if !gdb.upsert_agent_run(&run).await {
+            return true;
+        }
     }
-    gdb.set_parse_offset(&key, 0, mtime).await;
+    gdb.set_parse_offset(&key, len, mtime).await;
     false
 }
 
@@ -533,6 +540,9 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
                             total_inserted += 1;
                             total_cost += turn_cost;
                             total_tokens += turn_tokens;
+                        } else {
+                            // A later line of a message already recorded.
+                            gdb.fill_turn_usage(&turn.message_id, &turn.detail).await;
                         }
                     } else {
                         for (tool_use_id, tokens) in parse_tool_results(trimmed) {
@@ -961,5 +971,106 @@ mod tests {
         ingest_claude_from_home(&gdb, home.path()).await;
 
         assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().finished, Some(true));
+    }
+
+    /// A subagent tree with one run whose `.meta.json` is `meta`; returns
+    /// the home directory and the meta file's path.
+    fn subagent_home(meta: &str) -> (TempDir, PathBuf) {
+        let home = TempDir::new().unwrap();
+        let subagents = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-proj")
+            .join("sess-1")
+            .join("subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        std::fs::write(
+            subagents.join("agent-a1b2c3.jsonl"),
+            format!("{SUBAGENT_LINE}\n"),
+        )
+        .unwrap();
+        let meta_path = subagents.join("agent-a1b2c3.meta.json");
+        std::fs::write(&meta_path, meta).unwrap();
+        (home, meta_path)
+    }
+
+    fn set_mtime(path: &Path, at: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    /// Claude Code rewrites the meta file to set `finished`; a rewrite in the
+    /// same second as the last read, to the same length, is still read.
+    #[tokio::test]
+    async fn a_meta_rewrite_within_the_same_second_is_read() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, meta_path) = subagent_home(r#"{"agentType":"ob3","finished":false}"#);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        let second = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now.as_secs());
+        set_mtime(&meta_path, second + std::time::Duration::from_millis(100));
+        ingest_claude_from_home(&gdb, home.path()).await;
+        assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().finished, Some(false));
+
+        std::fs::write(&meta_path, r#"{"agentType":"ob3", "finished":true}"#).unwrap();
+        set_mtime(&meta_path, second + std::time::Duration::from_millis(900));
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().finished, Some(true));
+    }
+
+    /// A run that could not be recorded is not marked as read: the ingest
+    /// reports partial coverage and the next one records it.
+    #[tokio::test]
+    async fn a_run_that_failed_to_record_is_retried() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = subagent_home(r#"{"agentType":"ob3"}"#);
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute("DROP TABLE agent_runs", ())
+            .await
+            .unwrap();
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+        assert_eq!(stats.coverage[0].state, CoverageState::Partial);
+
+        let gdb = open_test_db(&db_tmp).await;
+        ingest_claude_from_home(&gdb, home.path()).await;
+        assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().role, "ob3");
+    }
+
+    /// A subagent message's first line is written while it streams, without
+    /// `speed` or thinking tokens; its last line has them. The turn keeps
+    /// them, and its tokens and cost stay those of the first line.
+    #[tokio::test]
+    async fn a_later_line_of_a_message_fills_its_usage_detail() {
+        let streaming = r#"{"type":"assistant","sessionId":"sess-1","agentId":"a1b2c3","message":{"id":"msg_s","model":"claude-opus-5-5","usage":{"input_tokens":2,"output_tokens":16,"service_tier":"standard"},"content":[]},"timestamp":"2026-10-27T04:00:00.000Z"}"#;
+        let finished = r#"{"type":"assistant","sessionId":"sess-1","agentId":"a1b2c3","message":{"id":"msg_s","model":"claude-opus-5-5","usage":{"input_tokens":2,"output_tokens":559,"service_tier":"standard","speed":"standard","output_tokens_details":{"thinking_tokens":648}},"content":[]},"timestamp":"2026-10-27T04:00:01.000Z"}"#;
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, meta_path) = subagent_home(r#"{"agentType":"ob3"}"#);
+        std::fs::write(
+            meta_path.with_extension("").with_extension("jsonl"),
+            format!("{streaming}\n{finished}\n"),
+        )
+        .unwrap();
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!((stats.turns_inserted, stats.tokens_consumed), (1, 18));
+        let detail = gdb.turn_detail("msg_s").await.unwrap();
+        assert_eq!(detail.speed.as_deref(), Some("standard"));
+        assert_eq!(detail.thinking_tokens, Some(648));
+        assert_eq!(detail.run_id.as_deref(), Some("a1b2c3"));
     }
 }
