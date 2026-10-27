@@ -38,6 +38,8 @@ and this project uses [maintenance-based versioning](TOKENSAVE-VERSIONING.md), n
 
 ### Fixed
 
+- **`global.db` opens no longer fail when two processes open it at once.** `PRAGMA journal_mode = WAL` ran before `PRAGMA busy_timeout`, so an open that met another connection's lock failed at once with `database is locked` and the Stop hook, monitor, `tokensave cost` or `tokensave status` skipped its work silently: 5 to 9 of 160 simultaneous opens in a test. The timeout is now set first (Refs inkcasthq/inkcast#254).
+
 - **`cargo test` no longer writes the developer's `~/.tokensave`.** Tests run MCP servers in-process, so every tool call they made was recorded in the real savings ledger: one full run wrote 9 files there, including 50 ledger rows, 140 temporary projects in `global.db`, `config.toml`, `state.toml` and a fresh `pricing.json`. `.cargo/config.toml` now sets `TOKENSAVE_HOME` to `target/test-tokensave-home` from outside the test process (a test cannot change it safely while other test threads run), `tests/data_home_guard_test.rs` fails when it is missing or points into the real `~/.tokensave`, and tests that give a child process its own `HOME` also set it on that child, to `<HOME>/.tokensave` (Refs inkcasthq/inkcast#251).
 
 - Add Pi real-session regression coverage for per-run retrieval guidance, compaction replay, and native reads after simulated retrieval failures.

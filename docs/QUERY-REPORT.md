@@ -3143,17 +3143,17 @@ ALTER TABLE turns ADD COLUMN run_id TEXT
 
 #### Q0255 — `open_at`
 
-Source: [src/global_db.rs:244](../src/global_db.rs#L244).
+Source: [src/global_db.rs:247](../src/global_db.rs#L247).
 
 ```sql
-PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
+PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
 ```
 
 #### Q0256 — `open_at`
 
-Source: [src/global_db.rs:252](../src/global_db.rs#L252).
+Source: [src/global_db.rs:255](../src/global_db.rs#L255).
 
 ```sql
 CREATE TABLE IF NOT EXISTS projects (
@@ -3164,7 +3164,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 #### Q0257 — `open_at`
 
-Source: [src/global_db.rs:261](../src/global_db.rs#L261).
+Source: [src/global_db.rs:264](../src/global_db.rs#L264).
 
 ```sql
 CREATE TABLE IF NOT EXISTS turns (
@@ -3229,7 +3229,7 @@ CREATE TABLE IF NOT EXISTS turns (
 
 #### Q0258 — `open_at`
 
-Source: [src/global_db.rs:324](../src/global_db.rs#L324).
+Source: [src/global_db.rs:327](../src/global_db.rs#L327).
 
 ```sql
 CREATE TABLE IF NOT EXISTS meta (
@@ -3240,7 +3240,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 #### Q0260 — `migrate_turns_columns`
 
-Source: [src/global_db.rs:362](../src/global_db.rs#L362).
+Source: [src/global_db.rs:365](../src/global_db.rs#L365).
 
 ```sql
 ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
@@ -3248,7 +3248,7 @@ ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
 
 #### Q0261 — `migrate_turns_columns`
 
-Source: [src/global_db.rs:369](../src/global_db.rs#L369).
+Source: [src/global_db.rs:372](../src/global_db.rs#L372).
 
 ```sql
 ALTER TABLE turns ADD COLUMN credits INTEGER
@@ -3256,7 +3256,7 @@ ALTER TABLE turns ADD COLUMN credits INTEGER
 
 #### Q0262 — `migrate_turns_columns`
 
-Source: [src/global_db.rs:379](../src/global_db.rs#L379).
+Source: [src/global_db.rs:382](../src/global_db.rs#L382).
 
 ```sql
 ALTER TABLE turns ADD COLUMN tool_result_tokens INTEGER NOT NULL DEFAULT 0
@@ -3264,7 +3264,7 @@ ALTER TABLE turns ADD COLUMN tool_result_tokens INTEGER NOT NULL DEFAULT 0
 
 #### Q0351 — `migrate_turns_columns`
 
-Source: [src/global_db.rs:395](../src/global_db.rs#L395).
+Source: [src/global_db.rs:398](../src/global_db.rs#L398).
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)
@@ -3272,7 +3272,7 @@ CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)
 
 #### Q0259 — `turns_columns`
 
-Source: [src/global_db.rs:412](../src/global_db.rs#L412).
+Source: [src/global_db.rs:415](../src/global_db.rs#L415).
 
 ```sql
 PRAGMA table_info(turns)
@@ -3280,7 +3280,7 @@ PRAGMA table_info(turns)
 
 #### Q0263 — `migrate_project_paths`
 
-Source: [src/global_db.rs:432](../src/global_db.rs#L432).
+Source: [src/global_db.rs:435](../src/global_db.rs#L435).
 
 ```sql
 SELECT 1 FROM meta WHERE key = 'projects_path_normalized'
@@ -3288,7 +3288,7 @@ SELECT 1 FROM meta WHERE key = 'projects_path_normalized'
 
 #### Q0264 — `migrate_project_paths`
 
-Source: [src/global_db.rs:443](../src/global_db.rs#L443).
+Source: [src/global_db.rs:446](../src/global_db.rs#L446).
 
 ```sql
 SELECT path, tokens_saved FROM projects
@@ -3296,7 +3296,7 @@ SELECT path, tokens_saved FROM projects
 
 #### Q0265 — `migrate_project_paths`
 
-Source: [src/global_db.rs:472](../src/global_db.rs#L472).
+Source: [src/global_db.rs:475](../src/global_db.rs#L475).
 
 ```sql
 DELETE FROM projects
@@ -3304,7 +3304,7 @@ DELETE FROM projects
 
 #### Q0266 — `migrate_project_paths`
 
-Source: [src/global_db.rs:478](../src/global_db.rs#L478).
+Source: [src/global_db.rs:481](../src/global_db.rs#L481).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3312,7 +3312,7 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0267 — `migrate_project_paths`
 
-Source: [src/global_db.rs:488](../src/global_db.rs#L488).
+Source: [src/global_db.rs:491](../src/global_db.rs#L491).
 
 ```sql
 UPDATE savings_ledger SET project_path = ?1 WHERE project_path = ?2
@@ -3320,7 +3320,7 @@ UPDATE savings_ledger SET project_path = ?1 WHERE project_path = ?2
 
 #### Q0268 — `migrate_project_paths`
 
-Source: [src/global_db.rs:497](../src/global_db.rs#L497).
+Source: [src/global_db.rs:500](../src/global_db.rs#L500).
 
 ```sql
 INSERT OR REPLACE INTO meta (key, value) VALUES ('projects_path_normalized', '1')
@@ -3328,7 +3328,7 @@ INSERT OR REPLACE INTO meta (key, value) VALUES ('projects_path_normalized', '1'
 
 #### Q0269 — `upsert`
 
-Source: [src/global_db.rs:512](../src/global_db.rs#L512).
+Source: [src/global_db.rs:515](../src/global_db.rs#L515).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3337,7 +3337,7 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0270 — `get_project_tokens`
 
-Source: [src/global_db.rs:525](../src/global_db.rs#L525).
+Source: [src/global_db.rs:528](../src/global_db.rs#L528).
 
 ```sql
 SELECT tokens_saved FROM projects WHERE path = ?1
@@ -3345,7 +3345,7 @@ SELECT tokens_saved FROM projects WHERE path = ?1
 
 #### Q0271 — `global_tokens_saved`
 
-Source: [src/global_db.rs:542](../src/global_db.rs#L542).
+Source: [src/global_db.rs:545](../src/global_db.rs#L545).
 
 ```sql
 SELECT COALESCE(SUM(tokens_saved), 0) FROM projects
@@ -3353,7 +3353,7 @@ SELECT COALESCE(SUM(tokens_saved), 0) FROM projects
 
 #### Q0272 — `record_savings`
 
-Source: [src/global_db.rs:564](../src/global_db.rs#L564).
+Source: [src/global_db.rs:567](../src/global_db.rs#L567).
 
 ```sql
 INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_tokens) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -3361,7 +3361,7 @@ INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_to
 
 #### Q0273 — `sum_savings`
 
-Source: [src/global_db.rs:578](../src/global_db.rs#L578).
+Source: [src/global_db.rs:581](../src/global_db.rs#L581).
 
 ```sql
 SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE project_path = ?1 AND ts >= ?2
@@ -3369,7 +3369,7 @@ SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - 
 
 #### Q0274 — `sum_savings`
 
-Source: [src/global_db.rs:581](../src/global_db.rs#L581).
+Source: [src/global_db.rs:584](../src/global_db.rs#L584).
 
 ```sql
 SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE ts >= ?1
@@ -3377,7 +3377,7 @@ SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - 
 
 #### Q0275 — `savings_history`
 
-Source: [src/global_db.rs:609](../src/global_db.rs#L609).
+Source: [src/global_db.rs:612](../src/global_db.rs#L612).
 
 ```sql
 SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE project_path = ?1 AND ts >= ?2 GROUP BY day ORDER BY day DESC
@@ -3385,7 +3385,7 @@ SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tok
 
 #### Q0276 — `savings_history`
 
-Source: [src/global_db.rs:615](../src/global_db.rs#L615).
+Source: [src/global_db.rs:618](../src/global_db.rs#L618).
 
 ```sql
 SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE ts >= ?1 GROUP BY day ORDER BY day DESC
@@ -3393,7 +3393,7 @@ SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tok
 
 #### Q0277 — `delete_project`
 
-Source: [src/global_db.rs:644](../src/global_db.rs#L644).
+Source: [src/global_db.rs:647](../src/global_db.rs#L647).
 
 ```sql
 DELETE FROM projects WHERE path = ?1
@@ -3401,7 +3401,7 @@ DELETE FROM projects WHERE path = ?1
 
 #### Q0278 — `delete_projects`
 
-Source: [src/global_db.rs:663](../src/global_db.rs#L663).
+Source: [src/global_db.rs:666](../src/global_db.rs#L666).
 
 ```sql
 DELETE FROM projects WHERE path IN ({})
@@ -3409,7 +3409,7 @@ DELETE FROM projects WHERE path IN ({})
 
 #### Q0279 — `list_project_paths`
 
-Source: [src/global_db.rs:679](../src/global_db.rs#L679).
+Source: [src/global_db.rs:682](../src/global_db.rs#L682).
 
 ```sql
 SELECT path FROM projects
@@ -3417,7 +3417,7 @@ SELECT path FROM projects
 
 #### Q0280 — `insert_turn`
 
-Source: [src/global_db.rs:697](../src/global_db.rs#L697).
+Source: [src/global_db.rs:700](../src/global_db.rs#L700).
 
 ```sql
 INSERT OR IGNORE INTO turns
@@ -3432,7 +3432,7 @@ INSERT OR IGNORE INTO turns
 
 #### Q0355 — `fill_turn_usage`
 
-Source: [src/global_db.rs:747](../src/global_db.rs#L747).
+Source: [src/global_db.rs:750](../src/global_db.rs#L750).
 
 ```sql
 UPDATE turns SET
@@ -3447,7 +3447,7 @@ UPDATE turns SET
 
 #### Q0352 — `turn_detail`
 
-Source: [src/global_db.rs:772](../src/global_db.rs#L772).
+Source: [src/global_db.rs:775](../src/global_db.rs#L775).
 
 ```sql
 SELECT effort, requested_model, thinking_tokens, thinking_ms,
@@ -3457,7 +3457,7 @@ SELECT effort, requested_model, thinking_tokens, thinking_ms,
 
 #### Q0353 — `upsert_agent_run`
 
-Source: [src/global_db.rs:798](../src/global_db.rs#L798).
+Source: [src/global_db.rs:801](../src/global_db.rs#L801).
 
 ```sql
 INSERT INTO agent_runs
@@ -3480,7 +3480,7 @@ INSERT INTO agent_runs
 
 #### Q0354 — `agent_run`
 
-Source: [src/global_db.rs:838](../src/global_db.rs#L838).
+Source: [src/global_db.rs:841](../src/global_db.rs#L841).
 
 ```sql
 SELECT run_id, session_id, project_hash, role, description, spawn_depth,
@@ -3490,7 +3490,7 @@ SELECT run_id, session_id, project_hash, role, description, spawn_depth,
 
 #### Q0281 — `add_tool_result_tokens`
 
-Source: [src/global_db.rs:880](../src/global_db.rs#L880).
+Source: [src/global_db.rs:883](../src/global_db.rs#L883).
 
 ```sql
 UPDATE turns SET tool_result_tokens = tool_result_tokens + ?2 WHERE message_id = ?1
@@ -3498,7 +3498,7 @@ UPDATE turns SET tool_result_tokens = tool_result_tokens + ?2 WHERE message_id =
 
 #### Q0282 — `upsert_droid_turn`
 
-Source: [src/global_db.rs:899](../src/global_db.rs#L899).
+Source: [src/global_db.rs:902](../src/global_db.rs#L902).
 
 ```sql
 INSERT INTO turns
@@ -3540,7 +3540,7 @@ INSERT INTO turns
 
 #### Q0283 — `total_cost_since`
 
-Source: [src/global_db.rs:960](../src/global_db.rs#L960).
+Source: [src/global_db.rs:963](../src/global_db.rs#L963).
 
 ```sql
 SELECT COALESCE(SUM(cost_usd), 0.0) FROM turns WHERE timestamp >= ?1
@@ -3548,7 +3548,7 @@ SELECT COALESCE(SUM(cost_usd), 0.0) FROM turns WHERE timestamp >= ?1
 
 #### Q0284 — `total_tokens_since`
 
-Source: [src/global_db.rs:974](../src/global_db.rs#L974).
+Source: [src/global_db.rs:977](../src/global_db.rs#L977).
 
 ```sql
 SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM turns WHERE timestamp >= ?1
@@ -3556,7 +3556,7 @@ SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM turns WHERE timestamp
 
 #### Q0285 — `token_breakdown_since`
 
-Source: [src/global_db.rs:989](../src/global_db.rs#L989).
+Source: [src/global_db.rs:992](../src/global_db.rs#L992).
 
 ```sql
 SELECT COALESCE(SUM(input_tokens), 0),
@@ -3568,7 +3568,7 @@ SELECT COALESCE(SUM(input_tokens), 0),
 
 #### Q0286 — `cost_by_model_since`
 
-Source: [src/global_db.rs:1019](../src/global_db.rs#L1019).
+Source: [src/global_db.rs:1022](../src/global_db.rs#L1022).
 
 ```sql
 SELECT model, SUM(cost_usd),
@@ -3579,7 +3579,7 @@ SELECT model, SUM(cost_usd),
 
 #### Q0287 — `cost_by_category_since`
 
-Source: [src/global_db.rs:1045](../src/global_db.rs#L1045).
+Source: [src/global_db.rs:1048](../src/global_db.rs#L1048).
 
 ```sql
 SELECT category, SUM(cost_usd), COUNT(*)
@@ -3589,7 +3589,7 @@ SELECT category, SUM(cost_usd), COUNT(*)
 
 #### Q0288 — `nav_turns_since`
 
-Source: [src/global_db.rs:1082](../src/global_db.rs#L1082).
+Source: [src/global_db.rs:1085](../src/global_db.rs#L1085).
 
 ```sql
 SELECT tool_names, tool_result_tokens FROM turns WHERE timestamp >= ?1 AND agent = 'claude'
@@ -3597,7 +3597,7 @@ SELECT tool_names, tool_result_tokens FROM turns WHERE timestamp >= ?1 AND agent
 
 #### Q0289 — `cost_by_agent_since`
 
-Source: [src/global_db.rs:1106](../src/global_db.rs#L1106).
+Source: [src/global_db.rs:1109](../src/global_db.rs#L1109).
 
 ```sql
 SELECT agent,
@@ -3614,7 +3614,7 @@ SELECT agent,
 
 #### Q0290 — `get_parse_offset`
 
-Source: [src/global_db.rs:1154](../src/global_db.rs#L1154).
+Source: [src/global_db.rs:1157](../src/global_db.rs#L1157).
 
 ```sql
 SELECT byte_offset, mtime FROM parse_offsets WHERE file_path = ?1
@@ -3622,7 +3622,7 @@ SELECT byte_offset, mtime FROM parse_offsets WHERE file_path = ?1
 
 #### Q0291 — `set_parse_offset`
 
-Source: [src/global_db.rs:1170](../src/global_db.rs#L1170).
+Source: [src/global_db.rs:1173](../src/global_db.rs#L1173).
 
 ```sql
 INSERT INTO parse_offsets (file_path, byte_offset, mtime) VALUES (?1, ?2, ?3)
@@ -3631,7 +3631,7 @@ INSERT INTO parse_offsets (file_path, byte_offset, mtime) VALUES (?1, ?2, ?3)
 
 #### Q0292 — `checkpoint`
 
-Source: [src/global_db.rs:1181](../src/global_db.rs#L1181).
+Source: [src/global_db.rs:1184](../src/global_db.rs#L1184).
 
 ```sql
 PRAGMA wal_checkpoint(TRUNCATE);
@@ -3639,7 +3639,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 
 #### Q0293 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1281](../src/global_db.rs#L1281).
+Source: [src/global_db.rs:1284](../src/global_db.rs#L1284).
 
 ```sql
 DELETE FROM meta WHERE key = 'projects_path_normalized';
@@ -3648,7 +3648,7 @@ DELETE FROM meta WHERE key = 'projects_path_normalized';
 
 #### Q0294 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1293](../src/global_db.rs#L1293).
+Source: [src/global_db.rs:1296](../src/global_db.rs#L1296).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3656,7 +3656,7 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0295 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1302](../src/global_db.rs#L1302).
+Source: [src/global_db.rs:1305](../src/global_db.rs#L1305).
 
 ```sql
 INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_tokens) VALUES (42, ?1, 'tokensave_context', 1000, 100)
@@ -11271,9 +11271,9 @@ pub async fn audit(db: &Database, limit: usize) -> Result<EdgeAudit> {
 }
 ```
 
-### `delete_projects` — src/global_db.rs:654
+### `delete_projects` — src/global_db.rs:657
 
-Source: [src/global_db.rs:654](../src/global_db.rs#L654).
+Source: [src/global_db.rs:657](../src/global_db.rs#L657).
 
 ```rust
     pub async fn delete_projects(&self, project_paths: &[String]) -> usize {
@@ -11300,9 +11300,9 @@ Source: [src/global_db.rs:654](../src/global_db.rs#L654).
     }
 ```
 
-### `migration_merges_duplicates_and_drops_relative_rows` — src/global_db.rs:1268
+### `migration_merges_duplicates_and_drops_relative_rows` — src/global_db.rs:1271
 
-Source: [src/global_db.rs:1268](../src/global_db.rs#L1268).
+Source: [src/global_db.rs:1271](../src/global_db.rs#L1271).
 
 ```rust
     async fn migration_merges_duplicates_and_drops_relative_rows() {
@@ -12922,9 +12922,9 @@ Source: [src/db/queries/nodes.rs:78](../src/db/queries/nodes.rs#L78).
     }
 ```
 
-### `upsert` — src/global_db.rs:507
+### `upsert` — src/global_db.rs:510
 
-Source: [src/global_db.rs:507](../src/global_db.rs#L507).
+Source: [src/global_db.rs:510](../src/global_db.rs#L510).
 
 ```rust
     pub async fn upsert(&self, project_path: &Path, tokens_saved: u64) {
@@ -12940,9 +12940,9 @@ Source: [src/global_db.rs:507](../src/global_db.rs#L507).
     }
 ```
 
-### `upsert_droid_turn` — src/global_db.rs:896
+### `upsert_droid_turn` — src/global_db.rs:899
 
-Source: [src/global_db.rs:896](../src/global_db.rs#L896).
+Source: [src/global_db.rs:899](../src/global_db.rs#L899).
 
 ```rust
     pub async fn upsert_droid_turn(&self, turn: &crate::types::CostTurn) -> bool {
