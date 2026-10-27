@@ -22,13 +22,14 @@ CXXFLAGS = { value = "-DNDEBUG", force = false }
 TOKENSAVE_SKIP_AGENT_MAINTENANCE = { value = "1", force = false }
 
 # Tests run MCP servers in-process, and every tool call they made landed in the
-# developer's real ~/.tokensave/global.db: 50 savings rows and 112 temporary
+# developer's real ~/.tokensave/global.db: 50 savings rows and 140 temporary
 # projects per `cargo test --workspace` (inkcast #251). Setting HOME cannot
 # contain it, for the reason above, and a test cannot change the variable
 # itself (`set_var` is unsound while other test threads run). So the data
 # folder is moved here, from outside the process, as Cargo's own test harness
-# moves CARGO_HOME. Tests that give a child process its own HOME remove the
-# variable on that child. `cargo run` sees it too: use
+# sets CARGO_HOME on the processes it starts. A test that gives a child process
+# its own HOME also sets TOKENSAVE_HOME on that child, to that HOME's
+# .tokensave. `cargo run` sees it too: use
 # `TOKENSAVE_HOME=~/.tokensave cargo run` to work on the real data.
 TOKENSAVE_HOME = { value = "target/test-tokensave-home", relative = true, force = false }
 

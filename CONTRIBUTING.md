@@ -41,10 +41,13 @@ in-process, and before this every tool call they made was recorded in your real
 savings ledger. A test cannot change the variable itself (`set_var` is unsound
 while other test threads run), which is why it is set from outside the process;
 `tests/data_home_guard_test.rs` fails if it is missing, for example when cargo
-runs from another directory and does not read `.cargo/config.toml`. A test that
-starts a child process with its own `HOME` removes `TOKENSAVE_HOME` from that
-child. `cargo run` uses the sandbox too; `TOKENSAVE_HOME=~/.tokensave cargo run`
-works on your real data.
+runs from another directory and does not read `.cargo/config.toml`, or if it
+points into your `~/.tokensave`. A test that starts a child process with its
+own `HOME` also sets `TOKENSAVE_HOME` on that child, to the `.tokensave` folder
+in that `HOME`. A `TOKENSAVE_HOME` already set in your shell wins over this
+default, so unset it before you run the tests if it names your real data.
+`cargo run` uses the sandbox too; `TOKENSAVE_HOME=~/.tokensave cargo run` works
+on your real data.
 
 ## Project Structure
 

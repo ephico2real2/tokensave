@@ -109,10 +109,6 @@ async fn server_without_disable_reaches_the_mcp_transport() {
     drop(db);
 
     let run = run_server(None, project, true);
-    #[cfg(windows)]
-    if let Some(global_db) = tokensave::global_db::GlobalDb::open().await {
-        global_db.delete_project(run.project.path()).await;
-    }
     assert!(
         run.status.success(),
         "serve exited with {}\nstderr: {}",
