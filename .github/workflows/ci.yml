@@ -123,10 +123,17 @@ jobs:
       # dist/ is committed so `cargo build` never needs Node: it must be exactly what the
       # sources build.
       - name: Check the committed dist/ matches a fresh build
+        # --ignored: a built file whose name a .gitignore matches (the root ignores `core`,
+        # `*.log`, `cache/`) would otherwise be left out of the commit and of this check.
         run: |
           npm run build
-          git add --intent-to-add dist
-          git diff --exit-code --stat -- dist
+          changes="$(git status --porcelain --ignored --untracked-files=all -- dist)"
+          if [ -n "${changes}" ]; then
+            echo "dist/ differs from a fresh build:"
+            echo "${changes}"
+            git diff --stat -- dist
+            exit 1
+          fi
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
       - name: Keep the screenshots

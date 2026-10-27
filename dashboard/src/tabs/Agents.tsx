@@ -54,7 +54,8 @@ export function Agents({ scope }: { scope: Scope }) {
 
 /**
  * Each session followed by the subagents it started, in the server's order. A subagent whose
- * session is not in the list (outside the range or filters) is shown at the top level.
+ * session is not in the list (outside the range or filters) is shown at the top level. Every run
+ * is shown exactly once, even when the server repeats an id or parents form a loop.
  */
 export function nestRuns(runs: Run[]): Run[] {
   const ids = new Set(runs.map((r) => r.id));
@@ -65,11 +66,16 @@ export function nestRuns(runs: Run[]): Run[] {
     }
   }
   const out: Run[] = [];
+  const seen = new Set<Run>();
   const visit = (r: Run) => {
+    if (seen.has(r)) return;
+    seen.add(r);
     out.push(r);
     (children.get(r.id) ?? []).forEach(visit);
   };
   runs.filter((r) => r.parentId === null || !ids.has(r.parentId)).forEach(visit);
+  // Runs no session reaches (a parent loop) still get their row, after the rest.
+  runs.forEach(visit);
   return out;
 }
 

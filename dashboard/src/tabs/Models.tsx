@@ -8,14 +8,19 @@ import { BarList } from '../components/BarList';
 import { HeatGrid, type HeatCell } from '../components/HeatGrid';
 import { RowList } from '../components/RowList';
 import { statusOf } from '../components/SectionState';
-import { heatUsd, modelLabel, pct, pct1, shortModel } from '../format';
+import { heatAmount, heatUsd, modelLabel, pct, pct1, shortModel } from '../format';
 import type { Fallbacks, ModelEffort } from '../types';
 
-/** Heat levels from cost, as the mockup sets them: $10, $40 and $100. */
+/**
+ * Heat levels from cost, as the mockup sets them: $10, $40 and $100. The level comes from the
+ * shown amount, as in the mockup, so $9.96 shows "$10" in the $10 band, not the one below.
+ */
 export function heatCell(cost: number | null, model: string, effort: string): HeatCell {
   if (cost === null) return { text: '—', level: 'none', label: `${model}, ${effort}: no turns` };
-  const level = cost >= 100 ? 3 : cost >= 40 ? 2 : cost >= 10 ? 1 : 0;
-  return { text: heatUsd(cost), level, label: `${model}, ${effort}: ${heatUsd(cost)}` };
+  const text = heatUsd(cost);
+  const shown = heatAmount(cost);
+  const level = shown >= 100 ? 3 : shown >= 40 ? 2 : shown >= 10 ? 1 : 0;
+  return { text, level, label: `${model}, ${effort}: ${text}` };
 }
 
 /** The Models and effort tab; the model × effort dataset is loaded by the app (filter choices). */

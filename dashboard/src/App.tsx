@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useErrorBoundary, useMemo, useState } from 'preact/hooks';
 import { modelsApi } from './api/models';
 import type { Scope } from './api/params';
 import { reposApi } from './api/repos';
@@ -96,13 +97,34 @@ export function App() {
         onFilter={(key: keyof Filters, value: string) => update(filterPatch(key, value))}
       />
       <main class="ts-main">
-        {state.tab === 'overview' && <Overview scope={scope} />}
-        {state.tab === 'agents' && <Agents scope={scope} />}
-        {state.tab === 'models' && <Models scope={scope} models={models} />}
-        {state.tab === 'repos' && <Repos repos={repos} now={now} />}
-        {state.tab === 'savings' && <Savings scope={scope} />}
-        {state.tab === 'sources' && <Sources now={now} />}
+        <TabBoundary key={state.tab}>
+          {state.tab === 'overview' && <Overview scope={scope} />}
+          {state.tab === 'agents' && <Agents scope={scope} />}
+          {state.tab === 'models' && <Models scope={scope} models={models} />}
+          {state.tab === 'repos' && <Repos repos={repos} now={now} />}
+          {state.tab === 'savings' && <Savings scope={scope} />}
+          {state.tab === 'sources' && <Sources now={now} />}
+        </TabBoundary>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Draws a tab, or names the error when its data doesn't fit the types (the responses are not
+ * checked at run time). Without it, the throw escapes Preact's render queue as an unhandled
+ * rejection and every section of the tab stays on "Loading…". Retry draws the tab again, which
+ * asks for its data again.
+ */
+function TabBoundary({ children }: { children: ComponentChildren }) {
+  const [error, reset] = useErrorBoundary();
+  if (!error) return <>{children}</>;
+  return (
+    <div class="ts-state ts-state--error" role="alert">
+      <span>Couldn't draw this tab. {error instanceof Error ? error.message : String(error)}</span>
+      <button type="button" class="ts-retry" onClick={reset}>
+        Retry
+      </button>
     </div>
   );
 }

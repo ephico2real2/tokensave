@@ -19,6 +19,17 @@ const OUT = join('test-results', 'mockup-diff');
 const REPORT = join(OUT, 'report.md');
 const MAX_DIFF = Number(process.env.MOCKUP_MAX_DIFF ?? '1');
 
+// The cases whose <main> differs by more than MAX_DIFF for a reason the PR lists under
+// "Compared with the mockup" (by number). Each ceiling is the larger of the two themes'
+// measured figures, rounded up to the next half percent: a new difference still fails.
+const JUSTIFIED: Record<string, { max: number; why: string }> = {
+  'overview-390': { max: 9, why: '4 (Table button), 5 (big numbers at least 24 px)' },
+  'overview-820': { max: 5, why: '4 (Table button), 5 (big numbers at least 24 px)' },
+  'repos-390': { max: 4, why: '6 (index command on one line)' },
+  'savings-390': { max: 7.5, why: '5 (big numbers at least 24 px)' },
+  'savings-820': { max: 5, why: '5 (big numbers at least 24 px)' },
+};
+
 // In order, in one worker, so the table rows keep the loop's order.
 test.describe.configure({ mode: 'default' });
 test.skip(!MOCKUP_DIR, 'MOCKUP_DIR is not set: no mockup to compare with');
@@ -91,7 +102,10 @@ for (const theme of ['light', 'dark'] as const) {
           REPORT,
           `| ${tab} | ${width} | ${theme} | ${ours.png.width}×${ours.png.height} | ${mockup.png.width}×${mockup.png.height} | ${percent(whole)} | ${percent(main)} |\n`,
         );
-        expect.soft(main * 100, `<main> differs from the mockup by more than ${MAX_DIFF} %`).toBeLessThanOrEqual(MAX_DIFF);
+        const justified = JUSTIFIED[`${tab}-${width}`];
+        const max = justified?.max ?? MAX_DIFF;
+        const why = justified ? ` (justified: ${justified.why})` : '';
+        expect.soft(main * 100, `<main> differs from the mockup by more than ${max} %${why}`).toBeLessThanOrEqual(max);
       });
     }
   }

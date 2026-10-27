@@ -1,15 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { openDashboard } from './dashboard';
+import { TAB_IDS, openDashboard } from './dashboard';
 
-test('runs under the server CSP (default-src self) with no console error', async ({ page }) => {
-  const problems: string[] = [];
-  page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
-  page.on('pageerror', (e) => problems.push(e.message));
-  await openDashboard(page);
-  const response = await page.request.get('/');
-  expect(response.headers()['content-security-policy']).toBe("default-src 'self'");
-  expect(problems).toEqual([]);
-});
+// Every tab, since each draws its own sections (and their inline sizes and colours).
+for (const tab of TAB_IDS) {
+  test(`${tab} runs under the server CSP (default-src self) with no console error`, async ({ page }) => {
+    const problems: string[] = [];
+    page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
+    page.on('pageerror', (e) => problems.push(e.message));
+    await openDashboard(page, { search: tab === 'overview' ? '' : `?tab=${tab}` });
+    const response = await page.request.get('/');
+    expect(response.headers()['content-security-policy']).toBe("default-src 'self'");
+    expect(problems).toEqual([]);
+  });
+}
 
 test('loads no remote resource: every request stays on the page origin', async ({ page }) => {
   const origins = new Set<string>();

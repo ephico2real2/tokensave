@@ -38,8 +38,11 @@ export const modelLabel = (model: string, effort: Effort | null): string =>
  * A cell of the model × effort grid. The mockup prints whole dollars ('$' + v); real costs
  * have cents, so values from $10 up are rounded to the dollar and smaller ones keep one decimal.
  */
-export const heatUsd = (cost: number): string =>
-  `$${cost >= 10 ? Math.round(cost) : Math.round(cost * 10) / 10}`;
+/** A heat cell's amount: whole dollars from $10, one decimal below. */
+export const heatAmount = (cost: number): number =>
+  cost >= 10 ? Math.round(cost) : Math.round(cost * 10) / 10;
+
+export const heatUsd = (cost: number): string => `$${heatAmount(cost)}`;
 
 /** How long ago an ISO time was, in words; null is "never". */
 export function ago(iso: string | null, now: number): string {
