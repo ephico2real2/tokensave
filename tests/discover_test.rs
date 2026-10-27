@@ -8,7 +8,7 @@
 use tempfile::TempDir;
 use tokensave::accounting::discover::{self, NavBucket};
 use tokensave::global_db::GlobalDb;
-use tokensave::types::CostTurn;
+use tokensave::types::{CostTurn, TurnDetail};
 
 async fn open_isolated_db(tmp: &TempDir) -> GlobalDb {
     let db_path = tmp.path().join(".tokensave").join("global.db");
@@ -31,6 +31,7 @@ fn turn(id: &str, ts: u64, input: u64, tool_names: &str) -> CostTurn {
         tool_names: tool_names.to_string(),
         agent: "claude".to_string(),
         credits: None,
+        detail: TurnDetail::default(),
     }
 }
 

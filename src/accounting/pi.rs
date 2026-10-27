@@ -21,7 +21,7 @@ use walkdir::WalkDir;
 use crate::accounting::classifier;
 use crate::accounting::parser::{parse_timestamp, CoverageState, SourceCoverage};
 use crate::global_db::GlobalDb;
-use crate::types::CostTurn;
+use crate::types::{CostTurn, TurnDetail};
 
 /// What one ingestion run of the Pi sessions directory produced.
 pub(crate) struct PiIngestResult {
@@ -168,6 +168,7 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<CostTu
         tool_names: tool_names.join(","),
         agent: "pi".to_string(),
         credits: None,
+        detail: TurnDetail::default(),
     })
 }
 

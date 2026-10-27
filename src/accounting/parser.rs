@@ -14,7 +14,7 @@ use crate::accounting::classifier;
 use crate::accounting::pricing;
 use crate::context::read_modes::estimate_tokens;
 use crate::global_db::GlobalDb;
-use crate::types::CostTurn;
+use crate::types::{AgentRun, CostTurn, TurnDetail};
 
 /// Whether a data source contributes complete, partial, or no coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -193,8 +193,99 @@ fn parse_line(line: &str, project_hash: &str, session_id: &str) -> Option<(CostT
         tool_names: tool_names_vec.join(","),
         agent: "claude".to_string(),
         credits: None,
+        detail: turn_detail(&v, usage),
     };
     Some((turn, tool_use_ids))
+}
+
+/// The [`TurnDetail`] of one assistant line: the outer object `v` and its
+/// `message.usage`. A key that is absent or `null` leaves its field `None`.
+fn turn_detail(v: &Value, usage: &Value) -> TurnDetail {
+    let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+    TurnDetail {
+        // Equal whenever both are set; either one may be null on its own.
+        effort: text(v.get("perTurnEffort")).or_else(|| text(v.get("effort"))),
+        requested_model: text(v.get("requestedModel")),
+        thinking_tokens: usage
+            .get("output_tokens_details")
+            .and_then(|d| d.get("thinking_tokens"))
+            .and_then(Value::as_u64),
+        // Per thinking block, and the message's first line wins; later blocks
+        // of a message measured at most 22 ms (0.002% of all thinking time).
+        thinking_ms: v.get("thinkingDurationMs").and_then(Value::as_u64),
+        speed: text(usage.get("speed")),
+        service_tier: text(usage.get("service_tier")),
+        git_branch: text(v.get("gitBranch")),
+        run_id: text(v.get("agentId")),
+    }
+}
+
+/// Longest `description` kept for a subagent run: a task label, not a prompt.
+const RUN_DESCRIPTION_MAX_CHARS: usize = 200;
+
+/// The [`AgentRun`] a subagent's `.meta.json` describes, or `None` when the
+/// file is unreadable or has no `agentType`.
+///
+/// `transcript` is the run's `.jsonl` beside it, at
+/// `projects/<project>/<session>/subagents/agent-<id>.jsonl`: the run id comes
+/// from its file name and the parent session from the folder above
+/// `subagents`.
+fn parse_agent_run(meta: &str, transcript: &Path, project_hash: &str) -> Option<AgentRun> {
+    let v: Value = serde_json::from_str(meta).ok()?;
+    let text = |key: &str| v.get(key).and_then(Value::as_str).map(str::to_string);
+    let run_id = transcript
+        .file_stem()?
+        .to_str()?
+        .strip_prefix("agent-")?
+        .to_string();
+    let subagents = transcript.parent()?;
+    if subagents.file_name()? != "subagents" {
+        return None;
+    }
+    let session_id = subagents.parent()?.file_name()?.to_str()?.to_string();
+    Some(AgentRun {
+        run_id,
+        session_id,
+        project_hash: project_hash.to_string(),
+        role: text("agentType")?,
+        description: text("description")
+            .map(|d| d.chars().take(RUN_DESCRIPTION_MAX_CHARS).collect()),
+        spawn_depth: v.get("spawnDepth").and_then(Value::as_u64),
+        parent_run_id: text("parentAgentId"),
+        tool_use_id: text("toolUseId"),
+        model: text("model"),
+        effort: text("effort"),
+        finished: v.get("finished").and_then(Value::as_bool),
+        worktree_branch: text("worktreeBranch"),
+    })
+}
+
+/// Records the run behind a subagent transcript from its `.meta.json`, when
+/// that file changed since the last ingest (`finished` is written late).
+/// Returns `true` when reading it failed, for the source's coverage.
+async fn ingest_agent_run(gdb: &GlobalDb, transcript: &Path, project_hash: &str) -> bool {
+    let meta_path = transcript.with_extension("meta.json");
+    let Ok(meta) = fs::metadata(&meta_path) else {
+        // Older Claude Code builds wrote no `.meta.json`: nothing to record.
+        return false;
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let key = meta_path.to_string_lossy().to_string();
+    if gdb.get_parse_offset(&key).await.map(|(_, m)| m) == Some(mtime) {
+        return false;
+    }
+    let Ok(text) = fs::read_to_string(&meta_path) else {
+        return true;
+    };
+    if let Some(run) = parse_agent_run(&text, transcript, project_hash) {
+        gdb.upsert_agent_run(&run).await;
+    }
+    gdb.set_parse_offset(&key, 0, mtime).await;
+    false
 }
 
 /// The tool results carried by one transcript line, as
@@ -354,6 +445,17 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
 
     for file_path in &files {
         let path_str = file_path.to_string_lossy().to_string();
+
+        // Before the unchanged-transcript skip below: a run's `.meta.json`
+        // can change (`finished`) after its transcript's last line.
+        if file_path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "subagents")
+        {
+            let (project_hash, _) = extract_path_parts(file_path);
+            had_errors |= ingest_agent_run(gdb, file_path, &project_hash).await;
+        }
 
         let Ok(meta) = fs::metadata(file_path) else {
             had_errors = true;
@@ -706,5 +808,158 @@ mod tests {
 
         assert!(parse_tool_results("not json").is_empty());
         assert!(parse_tool_results("{}").is_empty());
+    }
+
+    // Shapes measured on real Claude Code transcripts (2026-10-27): key names
+    // and value kinds only, sample values invented.
+    const MAIN_LINE: &str = r#"{"type":"assistant","sessionId":"sess-1","isSidechain":false,"gitBranch":"main","effort":"high","perTurnEffort":"high","requestedModel":"claude-opus-5-5[1m]","thinkingDurationMs":1234,"message":{"id":"msg_main","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard","speed":"standard","output_tokens_details":{"thinking_tokens":150}},"content":[]},"timestamp":"2026-10-27T04:00:00.000Z"}"#;
+    const SUBAGENT_LINE: &str = r#"{"type":"assistant","sessionId":"sess-1","isSidechain":true,"agentId":"a1b2c3","gitBranch":"fix/thing","effort":"xhigh","perTurnEffort":null,"message":{"id":"msg_sub","model":"claude-opus-5-5","usage":{"input_tokens":3,"output_tokens":40,"service_tier":"standard","speed":null}},"timestamp":"2026-10-27T04:01:00.000Z"}"#;
+
+    #[test]
+    fn a_main_session_turn_records_who_ran_it_and_how() {
+        let (turn, _) = parse_line(MAIN_LINE, "proj", "sess-1").unwrap();
+        assert_eq!(
+            turn.detail,
+            TurnDetail {
+                effort: Some("high".into()),
+                requested_model: Some("claude-opus-5-5[1m]".into()),
+                thinking_tokens: Some(150),
+                thinking_ms: Some(1234),
+                speed: Some("standard".into()),
+                service_tier: Some("standard".into()),
+                git_branch: Some("main".into()),
+                run_id: None,
+            }
+        );
+    }
+
+    /// `perTurnEffort` can be null while `effort` is set; a null `speed` is
+    /// no speed, not the string "null".
+    #[test]
+    fn a_subagent_turn_carries_its_run_and_falls_back_to_effort() {
+        let (turn, _) = parse_line(SUBAGENT_LINE, "proj", "agent-a1b2c3").unwrap();
+        assert_eq!(turn.detail.run_id.as_deref(), Some("a1b2c3"));
+        assert_eq!(turn.detail.effort.as_deref(), Some("xhigh"));
+        assert_eq!(turn.detail.speed, None);
+        assert_eq!(turn.detail.thinking_tokens, None);
+        assert_eq!(turn.detail.git_branch.as_deref(), Some("fix/thing"));
+    }
+
+    #[test]
+    fn a_line_without_the_fields_leaves_them_unknown() {
+        let line = r#"{"type":"assistant","message":{"id":"msg_old","model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":2}},"timestamp":"2026-04-14T10:00:00.000Z"}"#;
+        let (turn, _) = parse_line(line, "proj", "sess").unwrap();
+        assert_eq!(turn.detail, TurnDetail::default());
+    }
+
+    fn transcript() -> PathBuf {
+        PathBuf::from("/h/.claude/projects/-proj/sess-1/subagents/agent-a1b2c3.jsonl")
+    }
+
+    #[test]
+    fn a_meta_file_describes_its_run() {
+        let meta = r#"{"agentType":"ob3","description":"Review the change","toolUseId":"toolu_9","spawnDepth":1,"parentAgentId":"p0","model":"claude-opus-5-5","effort":"max","finished":true,"worktreeBranch":"review/9","requestShape":"x","isBuiltIn":false}"#;
+        let run = parse_agent_run(meta, &transcript(), "-proj").unwrap();
+        assert_eq!(
+            run,
+            AgentRun {
+                run_id: "a1b2c3".into(),
+                session_id: "sess-1".into(),
+                project_hash: "-proj".into(),
+                role: "ob3".into(),
+                description: Some("Review the change".into()),
+                spawn_depth: Some(1),
+                parent_run_id: Some("p0".into()),
+                tool_use_id: Some("toolu_9".into()),
+                model: Some("claude-opus-5-5".into()),
+                effort: Some("max".into()),
+                finished: Some(true),
+                worktree_branch: Some("review/9".into()),
+            }
+        );
+    }
+
+    /// Most meta files carry no model, effort or finished flag.
+    #[test]
+    fn a_sparse_meta_file_leaves_the_rest_unknown() {
+        let meta = r#"{"agentType":"Explore","description":"Find it","toolUseId":"toolu_1","spawnDepth":1}"#;
+        let run = parse_agent_run(meta, &transcript(), "-proj").unwrap();
+        assert_eq!(run.role, "Explore");
+        assert_eq!((run.model, run.effort, run.finished), (None, None, None));
+    }
+
+    #[test]
+    fn a_meta_file_is_refused_without_a_role_or_outside_subagents() {
+        assert!(parse_agent_run(r#"{"spawnDepth":1}"#, &transcript(), "-proj").is_none());
+        let elsewhere = PathBuf::from("/h/.claude/projects/-proj/sess-1/agent-a1b2c3.jsonl");
+        assert!(parse_agent_run(r#"{"agentType":"ob3"}"#, &elsewhere, "-proj").is_none());
+        assert!(parse_agent_run("not json", &transcript(), "-proj").is_none());
+    }
+
+    #[test]
+    fn a_long_description_is_cut_to_a_label() {
+        let long = "é".repeat(RUN_DESCRIPTION_MAX_CHARS + 50);
+        let meta = format!(r#"{{"agentType":"ob3","description":"{long}"}}"#);
+        let run = parse_agent_run(&meta, &transcript(), "-proj").unwrap();
+        assert_eq!(
+            run.description.unwrap().chars().count(),
+            RUN_DESCRIPTION_MAX_CHARS
+        );
+    }
+
+    /// End to end: a session with one subagent is ingested into `turns` and
+    /// `agent_runs`, and a later `finished` in the meta file reaches the run.
+    #[tokio::test]
+    async fn a_session_and_its_subagent_run_are_ingested() {
+        let home = TempDir::new().unwrap();
+        let db_tmp = TempDir::new().unwrap();
+        let session = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join("-proj")
+            .join("sess-1");
+        let subagents = session.join("subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        std::fs::write(session.with_extension("jsonl"), format!("{MAIN_LINE}\n")).unwrap();
+        std::fs::write(
+            subagents.join("agent-a1b2c3.jsonl"),
+            format!("{SUBAGENT_LINE}\n"),
+        )
+        .unwrap();
+        let meta_path = subagents.join("agent-a1b2c3.meta.json");
+        std::fs::write(&meta_path, r#"{"agentType":"ob3","spawnDepth":1}"#).unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+
+        let stats = ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(stats.turns_inserted, 2);
+        assert_eq!(stats.coverage[0].state, CoverageState::Complete);
+        let main = gdb.turn_detail("msg_main").await.unwrap();
+        assert_eq!(main.effort.as_deref(), Some("high"));
+        assert_eq!(main.run_id, None);
+        let sub = gdb.turn_detail("msg_sub").await.unwrap();
+        assert_eq!(sub.run_id.as_deref(), Some("a1b2c3"));
+        let run = gdb.agent_run("a1b2c3").await.unwrap();
+        assert_eq!(
+            (run.session_id.as_str(), run.role.as_str(), run.finished),
+            ("sess-1", "ob3", None)
+        );
+
+        std::fs::write(
+            &meta_path,
+            r#"{"agentType":"ob3","spawnDepth":1,"finished":true}"#,
+        )
+        .unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&meta_path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        ingest_claude_from_home(&gdb, home.path()).await;
+
+        assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().finished, Some(true));
     }
 }

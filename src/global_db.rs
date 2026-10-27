@@ -38,6 +38,31 @@ pub struct AgentCostSummary {
     pub turns: u64,
 }
 
+/// The `turns` columns that hold a turn's [`crate::types::TurnDetail`], with
+/// the statement that adds each to a database created before them.
+const TURN_DETAIL_COLUMNS: [(&str, &str); 8] = [
+    ("effort", "ALTER TABLE turns ADD COLUMN effort TEXT"),
+    (
+        "requested_model",
+        "ALTER TABLE turns ADD COLUMN requested_model TEXT",
+    ),
+    (
+        "thinking_tokens",
+        "ALTER TABLE turns ADD COLUMN thinking_tokens INTEGER",
+    ),
+    (
+        "thinking_ms",
+        "ALTER TABLE turns ADD COLUMN thinking_ms INTEGER",
+    ),
+    ("speed", "ALTER TABLE turns ADD COLUMN speed TEXT"),
+    (
+        "service_tier",
+        "ALTER TABLE turns ADD COLUMN service_tier TEXT",
+    ),
+    ("git_branch", "ALTER TABLE turns ADD COLUMN git_branch TEXT"),
+    ("run_id", "ALTER TABLE turns ADD COLUMN run_id TEXT"),
+];
+
 /// User-level database tracking all `TokenSave` projects.
 pub struct GlobalDb {
     conn: Connection,
@@ -248,11 +273,34 @@ impl GlobalDb {
                 tool_names TEXT NOT NULL DEFAULT '',
                 agent TEXT NOT NULL DEFAULT 'claude',
                 credits INTEGER,
-                tool_result_tokens INTEGER NOT NULL DEFAULT 0
+                tool_result_tokens INTEGER NOT NULL DEFAULT 0,
+                effort TEXT,
+                requested_model TEXT,
+                thinking_tokens INTEGER,
+                thinking_ms INTEGER,
+                speed TEXT,
+                service_tier TEXT,
+                git_branch TEXT,
+                run_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
             CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
             CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model);
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                description TEXT,
+                spawn_depth INTEGER,
+                parent_run_id TEXT,
+                tool_use_id TEXT,
+                model TEXT,
+                effort TEXT,
+                finished INTEGER,
+                worktree_branch TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id);
             CREATE TABLE IF NOT EXISTS parse_offsets (
                 file_path TEXT PRIMARY KEY,
                 byte_offset INTEGER NOT NULL,
@@ -295,8 +343,8 @@ impl GlobalDb {
         Self::open_at(&db_path).await
     }
 
-    /// Add `agent`, `credits` and `tool_result_tokens` columns to an existing
-    /// turns table if absent.
+    /// Add `agent`, `credits`, `tool_result_tokens` and the
+    /// [`TURN_DETAIL_COLUMNS`] to an existing turns table if absent.
     /// Best-effort: failures are silently ignored (matches `open_at` pattern).
     async fn migrate_turns_columns(conn: &Connection) {
         let Ok(mut rows) = conn.query("PRAGMA table_info(turns)", ()).await else {
@@ -305,6 +353,7 @@ impl GlobalDb {
         let mut has_agent = false;
         let mut has_credits = false;
         let mut has_tool_result_tokens = false;
+        let mut present: Vec<String> = Vec::new();
         while let Ok(Some(row)) = rows.next().await {
             if let Ok(name) = row.get::<String>(1) {
                 match name.as_str() {
@@ -313,6 +362,7 @@ impl GlobalDb {
                     "tool_result_tokens" => has_tool_result_tokens = true,
                     _ => {}
                 }
+                present.push(name);
             }
         }
         if !has_agent {
@@ -340,6 +390,21 @@ impl GlobalDb {
                 )
                 .await;
         }
+        // Turn detail (who ran the turn and how). Left NULL on rows parsed
+        // before, for the reason given for `tool_result_tokens` above.
+        for (column, ddl) in TURN_DETAIL_COLUMNS {
+            if !present.iter().any(|name| name == column) {
+                let _ = conn.execute(ddl, ()).await;
+            }
+        }
+        // After the columns: on a database that predates `run_id`, an index
+        // in the CREATE batch would fail and the whole open with it.
+        let _ = conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)",
+                (),
+            )
+            .await;
     }
 
     /// Rewrites pre-existing project keys to their canonical form, once per DB.
@@ -622,8 +687,11 @@ impl GlobalDb {
                 "INSERT OR IGNORE INTO turns
                  (message_id, project_hash, session_id, model, timestamp,
                   input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
-                  cost_usd, category, tool_names, agent, credits)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                  cost_usd, category, tool_names, agent, credits,
+                  effort, requested_model, thinking_tokens, thinking_ms,
+                  speed, service_tier, git_branch, run_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     turn.message_id.clone(),
                     turn.project_hash.clone(),
@@ -639,10 +707,114 @@ impl GlobalDb {
                     turn.tool_names.clone(),
                     turn.agent.clone(),
                     turn.credits.map(|c| c as i64),
+                    turn.detail.effort.clone(),
+                    turn.detail.requested_model.clone(),
+                    turn.detail.thinking_tokens.map(|t| t as i64),
+                    turn.detail.thinking_ms.map(|t| t as i64),
+                    turn.detail.speed.clone(),
+                    turn.detail.service_tier.clone(),
+                    turn.detail.git_branch.clone(),
+                    turn.detail.run_id.clone(),
                 ],
             )
             .await
             .is_ok_and(|n| n > 0)
+    }
+
+    /// The recorded [`crate::types::TurnDetail`] of a turn, or `None` for an
+    /// unknown `message_id`.
+    pub async fn turn_detail(&self, message_id: &str) -> Option<crate::types::TurnDetail> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT effort, requested_model, thinking_tokens, thinking_ms,
+                        speed, service_tier, git_branch, run_id
+                 FROM turns WHERE message_id = ?1",
+                params![message_id.to_string()],
+            )
+            .await
+            .ok()?;
+        let row = rows.next().await.ok()??;
+        Some(crate::types::TurnDetail {
+            effort: row.get(0).ok(),
+            requested_model: row.get(1).ok(),
+            thinking_tokens: row.get::<i64>(2).ok().map(|t| t as u64),
+            thinking_ms: row.get::<i64>(3).ok().map(|t| t as u64),
+            speed: row.get(4).ok(),
+            service_tier: row.get(5).ok(),
+            git_branch: row.get(6).ok(),
+            run_id: row.get(7).ok(),
+        })
+    }
+
+    /// Records a subagent run, replacing the stored row: its `.meta.json` is
+    /// rewritten as the run goes on (`finished` arrives at the end), and the
+    /// file's latest state is the run's.
+    pub async fn upsert_agent_run(&self, run: &crate::types::AgentRun) -> bool {
+        self.conn
+            .execute(
+                "INSERT INTO agent_runs
+                 (run_id, session_id, project_hash, role, description, spawn_depth,
+                  parent_run_id, tool_use_id, model, effort, finished, worktree_branch)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ON CONFLICT(run_id) DO UPDATE SET
+                     session_id      = excluded.session_id,
+                     project_hash    = excluded.project_hash,
+                     role            = excluded.role,
+                     description     = excluded.description,
+                     spawn_depth     = excluded.spawn_depth,
+                     parent_run_id   = excluded.parent_run_id,
+                     tool_use_id     = excluded.tool_use_id,
+                     model           = excluded.model,
+                     effort          = excluded.effort,
+                     finished        = excluded.finished,
+                     worktree_branch = excluded.worktree_branch",
+                params![
+                    run.run_id.clone(),
+                    run.session_id.clone(),
+                    run.project_hash.clone(),
+                    run.role.clone(),
+                    run.description.clone(),
+                    run.spawn_depth.map(|d| d as i64),
+                    run.parent_run_id.clone(),
+                    run.tool_use_id.clone(),
+                    run.model.clone(),
+                    run.effort.clone(),
+                    run.finished.map(i64::from),
+                    run.worktree_branch.clone(),
+                ],
+            )
+            .await
+            .is_ok_and(|n| n > 0)
+    }
+
+    /// The recorded subagent run with this id, if any.
+    pub async fn agent_run(&self, run_id: &str) -> Option<crate::types::AgentRun> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT run_id, session_id, project_hash, role, description, spawn_depth,
+                        parent_run_id, tool_use_id, model, effort, finished, worktree_branch
+                 FROM agent_runs WHERE run_id = ?1",
+                params![run_id.to_string()],
+            )
+            .await
+            .ok()?;
+        let row = rows.next().await.ok()??;
+        Some(crate::types::AgentRun {
+            run_id: row.get(0).ok()?,
+            session_id: row.get(1).ok()?,
+            project_hash: row.get(2).ok()?,
+            role: row.get(3).ok()?,
+            description: row.get(4).ok(),
+            spawn_depth: row.get::<i64>(5).ok().map(|d| d as u64),
+            parent_run_id: row.get(6).ok(),
+            tool_use_id: row.get(7).ok(),
+            model: row.get(8).ok(),
+            effort: row.get(9).ok(),
+            finished: row.get::<i64>(10).ok().map(|f| f != 0),
+            worktree_branch: row.get(11).ok(),
+        })
     }
 
     /// Adds `tokens` to a turn's recorded tool-result size.

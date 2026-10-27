@@ -17,7 +17,7 @@ use serde::Deserialize;
 use walkdir::WalkDir;
 
 use crate::accounting::parser::{parse_timestamp, CoverageState, SourceCoverage};
-use crate::types::CostTurn;
+use crate::types::{CostTurn, TurnDetail};
 
 /// Exclusive per-session token counters from a Droid `.settings.json` file.
 #[derive(Debug, Deserialize)]
@@ -181,6 +181,7 @@ pub(crate) fn parse_settings_file(path: &Path) -> Result<Option<CostTurn>, ()> {
         tool_names: String::new(),
         agent: "droid".to_string(),
         credits,
+        detail: TurnDetail::default(),
     }))
 }
 

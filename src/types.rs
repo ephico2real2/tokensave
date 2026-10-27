@@ -1079,4 +1079,55 @@ pub struct CostTurn {
     pub agent: String,
     /// Agent-native credit units (Droid only). None for Claude turns.
     pub credits: Option<u64>,
+    /// Who ran the turn and how, where the source records it.
+    pub detail: TurnDetail,
+}
+
+/// Per-turn facts a transcript may carry beyond tokens and cost. Every field
+/// is optional: a source or an older log that lacks one leaves it `None`,
+/// stored as `NULL`, and never guessed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnDetail {
+    /// Reasoning effort (`high`, `xhigh`, `max`…): Claude Code's
+    /// `perTurnEffort`, else its `effort`. The two never disagree when both
+    /// are set, but either may be `null`.
+    pub effort: Option<String>,
+    /// The model as requested, written as the client wrote it (e.g.
+    /// `claude-opus-5-5[1m]`, whose suffix names the context window). A
+    /// fallback is a requested model, suffix removed, that differs from
+    /// the served one.
+    pub requested_model: Option<String>,
+    pub thinking_tokens: Option<u64>,
+    pub thinking_ms: Option<u64>,
+    pub speed: Option<String>,
+    pub service_tier: Option<String>,
+    pub git_branch: Option<String>,
+    /// The subagent run that produced the turn (`agentId`), or `None` for a
+    /// main-session turn. Joins `agent_runs.run_id`.
+    pub run_id: Option<String>,
+}
+
+/// One subagent run, from the `.meta.json` Claude Code writes beside the
+/// run's transcript (`<session>/subagents/agent-<id>.meta.json`).
+///
+/// Only `role` and `spawn_depth` are reliably present; `model`, `effort` and
+/// `finished` appear in a minority of files, so a run's model and effort are
+/// read from its turns, and these are kept only as the file states them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRun {
+    pub run_id: String,
+    /// The parent session the run was spawned from.
+    pub session_id: String,
+    pub project_hash: String,
+    /// `agentType`: the subagent type, e.g. `Explore` or a custom agent name.
+    pub role: String,
+    /// The short task label the parent gave the run, capped in length.
+    pub description: Option<String>,
+    pub spawn_depth: Option<u64>,
+    pub parent_run_id: Option<String>,
+    pub tool_use_id: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub finished: Option<bool>,
+    pub worktree_branch: Option<String>,
 }
