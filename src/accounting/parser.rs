@@ -567,7 +567,8 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
                             // parse sees when the assistant line fell before
                             // the stored offset; there is nothing to add it to.
                             if let Some(message_id) = issuing_turn.remove(&tool_use_id) {
-                                gdb.add_tool_result_tokens(&message_id, tokens).await;
+                                gdb.add_tool_result_tokens(&message_id, &tool_use_id, tokens)
+                                    .await;
                             }
                         }
                     }
@@ -1344,5 +1345,83 @@ mod tests {
             .await;
             assert_eq!(twice, once, "{id:?}");
         }
+    }
+
+    fn tool_result(id: &str) -> String {
+        format!(
+            r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"{id}","content":"0123456789012345678901234567890123456789"}}]}}}}"#
+        )
+    }
+
+    /// A transcript read again counts each tool result once (#255), whether
+    /// its call was on the first line of its message or a later one, and
+    /// with the results in separate user messages.
+    #[tokio::test]
+    async fn results_are_counted_once_however_often_the_file_is_read() {
+        let (once, twice) = turn_after_two_reads(
+            &[
+                assistant_line("msg_c", 8, "null", &tool_use("toolu_g", "Grep", "")),
+                assistant_line(
+                    "msg_c",
+                    8,
+                    r#""tool_use""#,
+                    &tool_use("toolu_r", "Read", ""),
+                ),
+                tool_result("toolu_g"),
+                tool_result("toolu_r"),
+            ],
+            "msg_c",
+        )
+        .await;
+        assert_eq!(once.tool_result_tokens, 20);
+        assert_eq!(twice, once);
+    }
+
+    /// A turn recorded before `result_ids` is added to while its size is 0,
+    /// and left alone once it holds a size whose results are unknown.
+    #[tokio::test]
+    async fn a_turn_recorded_before_result_ids_is_added_to_only_while_empty() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let first = assistant_line("msg_l", 8, "null", &tool_use("toolu_a", "Read", ""));
+        let legacy = parse_line(&first, "proj", "sess").unwrap().turn;
+        assert!(gdb.insert_turn(&legacy).await);
+
+        assert!(gdb.add_tool_result_tokens("msg_l", "toolu_a", 10).await);
+        assert!(!gdb.add_tool_result_tokens("msg_l", "toolu_a", 10).await);
+        assert!(gdb.add_tool_result_tokens("msg_l", "toolu_b", 5).await);
+        assert_eq!(stored_turn(&db_tmp, "msg_l").await.tool_result_tokens, 15);
+
+        let other = assistant_line("msg_k", 8, "null", &tool_use("toolu_c", "Read", ""));
+        assert!(
+            gdb.insert_turn(&parse_line(&other, "proj", "sess").unwrap().turn)
+                .await
+        );
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute(
+                "UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert!(!gdb.add_tool_result_tokens("msg_k", "toolu_c", 10).await);
+        assert_eq!(stored_turn(&db_tmp, "msg_k").await.tool_result_tokens, 7);
+    }
+
+    #[tokio::test]
+    async fn a_result_with_an_unusable_id_is_not_counted() {
+        let db_tmp = TempDir::new().unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let line = assistant_line("msg_v", 8, "null", TEXT);
+        assert!(
+            gdb.insert_claude_turn(&parse_line(&line, "proj", "sess").unwrap())
+                .await
+        );
+        assert!(!gdb.add_tool_result_tokens("msg_v", "", 10).await);
+        assert!(!gdb.add_tool_result_tokens("msg_v", "toolu_a,b", 10).await);
+        assert_eq!(stored_turn(&db_tmp, "msg_v").await.tool_result_tokens, 0);
     }
 }

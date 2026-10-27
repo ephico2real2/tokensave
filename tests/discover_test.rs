@@ -46,7 +46,8 @@ async fn seed(db: &GlobalDb, id: &str, ts: u64, result_tokens: u64, tool_names: 
         .insert_turn(&turn(id, ts, result_tokens, tool_names))
         .await;
     if inserted && result_tokens > 0 {
-        db.add_tool_result_tokens(id, result_tokens).await;
+        db.add_tool_result_tokens(id, &format!("toolu_{id}"), result_tokens)
+            .await;
     }
     inserted
 }

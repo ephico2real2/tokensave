@@ -66,11 +66,13 @@ const TURN_DETAIL_COLUMNS: [(&str, &str); 8] = [
     ("run_id", "ALTER TABLE turns ADD COLUMN run_id TEXT"),
 ];
 
-/// The `turns` columns a later transcript line of a Claude Code message is
-/// merged against ([`crate::accounting::turn_merge`]), with the statement that
-/// adds each to a database created before them. `NULL` marks a turn recorded
-/// before them, whose calls are unknown.
-const TURN_MERGE_COLUMNS: [(&str, &str); 2] = [
+/// The `turns` columns that let a Claude Code transcript be read again without
+/// counting anything twice: the calls and Bash signals a later line of a
+/// message is merged against ([`crate::accounting::turn_merge`]), and the
+/// calls whose results are counted ([`GlobalDb::add_tool_result_tokens`]).
+/// Each with the statement that adds it to a database created before it.
+/// `NULL` marks a turn recorded before them.
+const TURN_MERGE_COLUMNS: [(&str, &str); 3] = [
     (
         "tool_use_ids",
         "ALTER TABLE turns ADD COLUMN tool_use_ids TEXT",
@@ -79,6 +81,7 @@ const TURN_MERGE_COLUMNS: [(&str, &str); 2] = [
         "bash_signals",
         "ALTER TABLE turns ADD COLUMN bash_signals INTEGER",
     ),
+    ("result_ids", "ALTER TABLE turns ADD COLUMN result_ids TEXT"),
 ];
 
 /// User-level database tracking all `TokenSave` projects.
@@ -301,7 +304,8 @@ impl GlobalDb {
                 git_branch TEXT,
                 run_id TEXT,
                 tool_use_ids TEXT,
-                bash_signals INTEGER
+                bash_signals INTEGER,
+                result_ids TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
             CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
@@ -715,18 +719,19 @@ impl GlobalDb {
 
     /// Insert a parsed turn. Returns `true` if inserted, `false` if duplicate.
     pub async fn insert_turn(&self, turn: &crate::types::CostTurn) -> bool {
-        self.insert_turn_row(turn, None, None).await
+        self.insert_turn_row(turn, None, None, None).await
     }
 
     /// Insert the turn of a Claude Code message from the first of its lines
     /// read, with the calls and Bash signals a later line is merged against
-    /// ([`Self::merge_claude_line`]). Returns `true` if inserted, `false` if
-    /// the message is already recorded.
+    /// ([`Self::merge_claude_line`]) and no tool result counted yet. Returns
+    /// `true` if inserted, `false` if the message is already recorded.
     pub async fn insert_claude_turn(&self, line: &ClaudeLine) -> bool {
         self.insert_turn_row(
             &line.turn,
             Some(line.call_ids()),
             Some(i64::from(line.bash.bits())),
+            Some(String::new()),
         )
         .await
     }
@@ -736,6 +741,7 @@ impl GlobalDb {
         turn: &crate::types::CostTurn,
         tool_use_ids: Option<String>,
         bash_signals: Option<i64>,
+        result_ids: Option<String>,
     ) -> bool {
         self.conn
             .execute(
@@ -745,9 +751,9 @@ impl GlobalDb {
                   cost_usd, category, tool_names, agent, credits,
                   effort, requested_model, thinking_tokens, thinking_ms,
                   speed, service_tier, git_branch, run_id,
-                  tool_use_ids, bash_signals)
+                  tool_use_ids, bash_signals, result_ids)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
                 params![
                     turn.message_id.clone(),
                     turn.project_hash.clone(),
@@ -773,6 +779,7 @@ impl GlobalDb {
                     turn.detail.run_id.clone(),
                     tool_use_ids,
                     bash_signals,
+                    result_ids,
                 ],
             )
             .await
@@ -987,7 +994,8 @@ impl GlobalDb {
         })
     }
 
-    /// Adds `tokens` to a turn's recorded tool-result size.
+    /// Adds the `tokens` of the result of call `tool_use_id` to a turn's
+    /// recorded tool-result size, once. Returns `true` when it was added.
     ///
     /// Tool results are not in the assistant message that requested them: they
     /// arrive in the following user message, one block per `tool_use_id`, so
@@ -996,18 +1004,41 @@ impl GlobalDb {
     /// turn may issue several tools, and their results can be split across
     /// more than one user message.
     ///
+    /// The call's id is recorded in `result_ids` by the same statement, and a
+    /// result whose id is recorded adds nothing, so a transcript read again
+    /// does not count its results twice (inkcast #255). A turn recorded before
+    /// `result_ids` (`NULL`) is added to only while its size is 0: no result
+    /// has been counted for it then; once one has, which ones is unknown. An
+    /// id that is empty or holds a comma could not be found in the
+    /// comma-joined list, so its result is not counted (none in 80,623 real
+    /// ids, 2026-10-27).
+    ///
     /// A no-op for an unknown `message_id`, which is what a resumed parse sees
     /// when the assistant line fell before the stored offset and its results
     /// after.
-    pub async fn add_tool_result_tokens(&self, message_id: &str, tokens: u64) -> bool {
-        if tokens == 0 {
+    pub async fn add_tool_result_tokens(
+        &self,
+        message_id: &str,
+        tool_use_id: &str,
+        tokens: u64,
+    ) -> bool {
+        if tokens == 0 || tool_use_id.is_empty() || tool_use_id.contains(',') {
             return false;
         }
         self.conn
             .execute(
-                "UPDATE turns SET tool_result_tokens = tool_result_tokens + ?2 \
-                 WHERE message_id = ?1",
-                params![message_id.to_string(), tokens as i64],
+                "UPDATE turns SET
+                     tool_result_tokens = tool_result_tokens + ?3,
+                     result_ids = CASE WHEN COALESCE(result_ids, '') = '' THEN ?2
+                                       ELSE result_ids || ',' || ?2 END
+                 WHERE message_id = ?1
+                   AND (result_ids IS NOT NULL OR tool_result_tokens = 0)
+                   AND instr(',' || COALESCE(result_ids, '') || ',', ',' || ?2 || ',') = 0",
+                params![
+                    message_id.to_string(),
+                    tool_use_id.to_string(),
+                    tokens as i64
+                ],
             )
             .await
             .is_ok_and(|n| n > 0)
