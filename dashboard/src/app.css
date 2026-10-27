@@ -594,6 +594,9 @@ button {
 
 .ts-bar__fill {
   height: 8px;
+  /* A share can exceed 1 (thinking above output in turns recorded before inkcast
+     issue 250): the label keeps the value, the bar stops at its track. */
+  max-width: 100%;
   border-radius: 4px;
 }
 
