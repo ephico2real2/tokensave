@@ -261,9 +261,12 @@ impl GlobalDb {
         let db = Builder::new_local(db_path).build().await.ok()?;
         let conn = db.connect().ok()?;
 
+        // busy_timeout first: `journal_mode = WAL` takes a lock, and before
+        // the timeout is set a concurrent open fails at once with "database
+        // is locked" (5 to 9 of 160 simultaneous opens) instead of waiting.
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;",
         )
         .await
@@ -1472,5 +1475,40 @@ mod tests {
         assert_eq!(db.get_project_tokens(&project).await, 26_000);
         // The ledger row written under the old spelling still answers for the project.
         assert_eq!(db.sum_savings(Some(&canonical), 0).await.calls, 1);
+    }
+
+    /// Processes that open the database at the same moment (the Stop hook,
+    /// the monitor, `tokensave cost`) all get it.
+    #[test]
+    fn concurrent_opens_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("global.db");
+        let runtime = || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        };
+        assert!(runtime().block_on(GlobalDb::open_at(&path)).is_some());
+        let mut failed = 0;
+        for _ in 0..20 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let opens: Vec<_> = (0..8)
+                .map(|_| {
+                    let (path, barrier) = (path.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        let rt = runtime();
+                        barrier.wait();
+                        rt.block_on(GlobalDb::open_at(&path)).is_none()
+                    })
+                })
+                .collect();
+            failed += opens
+                .into_iter()
+                .map(|open| open.join().unwrap())
+                .filter(|&none| none)
+                .count();
+        }
+        assert_eq!(failed, 0, "opens that returned no database, of 160");
     }
 }
