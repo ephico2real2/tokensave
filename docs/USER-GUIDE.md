@@ -815,7 +815,7 @@ It verifies:
 
 - **Binary** — location and version
 - **Current project** — whether a `.tokensave/` index exists and the database is healthy
-- **Global database** — the cross-project database at `~/.tokensave/global.db`
+- **Global database** — the cross-project database at `~/.tokensave/global.db`, and its schema version against the one this tokensave writes; a database newer than the binary is read only, and doctor warns about it
 - **User config** — `~/.tokensave/config.toml` (plus machine-local `state.toml`) and upload settings
 - **Agent integrations** — MCP server registration, hook installation, tool permissions, prompt rules
 - **Network** — connectivity to the worldwide counter and GitHub releases API

@@ -41,53 +41,35 @@ pub struct AgentCostSummary {
     pub turns: u64,
 }
 
-/// The `turns` columns that hold a turn's [`crate::types::TurnDetail`], with
-/// the statement that adds each to a database created before them.
-const TURN_DETAIL_COLUMNS: [(&str, &str); 8] = [
-    ("effort", "ALTER TABLE turns ADD COLUMN effort TEXT"),
-    (
-        "requested_model",
-        "ALTER TABLE turns ADD COLUMN requested_model TEXT",
-    ),
-    (
-        "thinking_tokens",
-        "ALTER TABLE turns ADD COLUMN thinking_tokens INTEGER",
-    ),
-    (
-        "thinking_ms",
-        "ALTER TABLE turns ADD COLUMN thinking_ms INTEGER",
-    ),
-    ("speed", "ALTER TABLE turns ADD COLUMN speed TEXT"),
-    (
-        "service_tier",
-        "ALTER TABLE turns ADD COLUMN service_tier TEXT",
-    ),
-    ("git_branch", "ALTER TABLE turns ADD COLUMN git_branch TEXT"),
-    ("run_id", "ALTER TABLE turns ADD COLUMN run_id TEXT"),
-];
+mod migrations;
 
-/// The `turns` columns that let a Claude Code transcript be read again without
-/// counting anything twice: the calls and Bash signals a later line of a
-/// message is merged against ([`crate::accounting::turn_merge`]), and the
-/// calls whose results are counted ([`GlobalDb::add_tool_result_tokens`]).
-/// Each with the statement that adds it to a database created before it.
-/// `NULL` marks a turn recorded before them.
-const TURN_MERGE_COLUMNS: [(&str, &str); 3] = [
-    (
-        "tool_use_ids",
-        "ALTER TABLE turns ADD COLUMN tool_use_ids TEXT",
-    ),
-    (
-        "bash_signals",
-        "ALTER TABLE turns ADD COLUMN bash_signals INTEGER",
-    ),
-    ("result_ids", "ALTER TABLE turns ADD COLUMN result_ids TEXT"),
-];
+/// The schema version of `global.db` this binary writes: its `PRAGMA
+/// user_version` once opened (inkcast #248).
+pub const SCHEMA_VERSION: u32 = migrations::LATEST;
 
 /// User-level database tracking all `TokenSave` projects.
 pub struct GlobalDb {
     conn: Connection,
+    /// The schema version found, when newer than [`SCHEMA_VERSION`]: the
+    /// database is then read only.
+    newer_schema: Option<u32>,
     _db: LibsqlDatabase,
+}
+
+/// What a binary older than its database says: the database is read only.
+pub fn newer_schema_notice(found: u32) -> String {
+    format!(
+        "global.db is at schema version {found}, newer than this tokensave knows \
+         ({SCHEMA_VERSION}): it is read only, and no usage is recorded. Upgrade tokensave."
+    )
+}
+
+/// The schema version of the database at `db_path`, read without migrating
+/// it, or `None` when it cannot be read.
+pub async fn schema_version_at(db_path: &Path) -> Option<u32> {
+    let db = Builder::new_local(db_path).build().await.ok()?;
+    let conn = db.connect().ok()?;
+    migrations::user_version(&conn).await.ok()
 }
 
 /// Returns the path to the global database: `~/.tokensave/global.db`.
@@ -251,9 +233,18 @@ impl GlobalDb {
         sibling_project_keys(&served, &self.list_project_paths().await)
     }
 
-    /// Opens (or creates) the global database at an explicit path. Returns
-    /// `None` if the directory cannot be created or the DB fails to open.
+    /// Opens (or creates) the global database at an explicit path, migrating
+    /// its schema to [`SCHEMA_VERSION`]. Returns `None` if the directory
+    /// cannot be created, the DB fails to open or a migration fails. A
+    /// database at a newer version is opened read only ([`Self::newer_schema`]).
     pub async fn open_at(db_path: &std::path::Path) -> Option<Self> {
+        Self::open_with(db_path, migrations::MIGRATIONS).await
+    }
+
+    async fn open_with(
+        db_path: &std::path::Path,
+        schema: &[migrations::Migration],
+    ) -> Option<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok()?;
         }
@@ -263,100 +254,31 @@ impl GlobalDb {
 
         Self::apply_pragmas(&conn).await.ok()?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS projects (
-                path TEXT PRIMARY KEY,
-                tokens_saved INTEGER NOT NULL DEFAULT 0
-            )",
-        )
-        .await
-        .ok()?;
-
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS turns (
-                message_id TEXT PRIMARY KEY,
-                project_hash TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                input_tokens INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-                cost_usd REAL NOT NULL,
-                category TEXT NOT NULL,
-                tool_names TEXT NOT NULL DEFAULT '',
-                agent TEXT NOT NULL DEFAULT 'claude',
-                credits INTEGER,
-                tool_result_tokens INTEGER NOT NULL DEFAULT 0,
-                effort TEXT,
-                requested_model TEXT,
-                thinking_tokens INTEGER,
-                thinking_ms INTEGER,
-                speed TEXT,
-                service_tier TEXT,
-                git_branch TEXT,
-                run_id TEXT,
-                tool_use_ids TEXT,
-                bash_signals INTEGER,
-                result_ids TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
-            CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model);
-            CREATE TABLE IF NOT EXISTS agent_runs (
-                run_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                project_hash TEXT NOT NULL,
-                role TEXT NOT NULL,
-                description TEXT,
-                spawn_depth INTEGER,
-                parent_run_id TEXT,
-                tool_use_id TEXT,
-                model TEXT,
-                effort TEXT,
-                finished INTEGER,
-                worktree_branch TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id);
-            CREATE TABLE IF NOT EXISTS parse_offsets (
-                file_path TEXT PRIMARY KEY,
-                byte_offset INTEGER NOT NULL,
-                mtime INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS savings_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts INTEGER NOT NULL,
-                project_path TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                before_tokens INTEGER NOT NULL,
-                after_tokens INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_savings_ledger_ts ON savings_ledger(ts);
-            CREATE INDEX IF NOT EXISTS idx_savings_ledger_project ON savings_ledger(project_path)",
-        )
-        .await
-        .ok()?;
-
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )",
-        )
-        .await
-        .ok()?;
-
-        // Migrate existing DBs: add the `turns` columns they lack. A failed
-        // migration fails the open: `insert_turn` names the added columns, so
-        // it would fail on every turn while the parser still advanced its
-        // offsets. The next open retries.
-        if !Self::migrate_turns_columns(&conn).await {
-            return None;
+        // A failed migration fails the open: `insert_turn` names the columns
+        // it adds, so every turn would fail while the parser still advanced
+        // its offsets. The next open retries.
+        let newer_schema = match migrations::migrate(&conn, schema).await {
+            Ok(migrations::Outcome::Current) => None,
+            Ok(migrations::Outcome::Newer(found)) => {
+                // Written to by a binary that does not know its schema, the
+                // database could be broken in ways neither version detects.
+                conn.execute_batch("PRAGMA query_only = 1").await.ok()?;
+                Some(found)
+            }
+            Err(error) => {
+                tracing::warn!(%error, path = %db_path.display(), "global.db not opened");
+                return None;
+            }
+        };
+        if newer_schema.is_none() {
+            Self::migrate_project_paths(&conn).await;
         }
-        Self::migrate_project_paths(&conn).await;
 
-        Some(Self { conn, _db: db })
+        Some(Self {
+            conn,
+            newer_schema,
+            _db: db,
+        })
     }
 
     /// Sets the connection's PRAGMAs, retrying a lock error.
@@ -395,82 +317,22 @@ impl GlobalDb {
     }
 
     /// Opens (or creates) the global database. Returns `None` if the home
-    /// directory cannot be determined or the DB fails to open.
+    /// directory cannot be determined or the DB fails to open. A database
+    /// newer than this binary is reported on stderr, once per process.
     pub async fn open() -> Option<Self> {
+        static NOTICE: std::sync::Once = std::sync::Once::new();
         let db_path = global_db_path()?;
-        Self::open_at(&db_path).await
+        let db = Self::open_at(&db_path).await?;
+        if let Some(found) = db.newer_schema {
+            NOTICE.call_once(|| eprintln!("[tokensave] {}", newer_schema_notice(found)));
+        }
+        Some(db)
     }
 
-    /// Add `agent`, `credits`, `tool_result_tokens`, the
-    /// [`TURN_DETAIL_COLUMNS`] and the [`TURN_MERGE_COLUMNS`] to an existing
-    /// turns table if absent. Returns whether every one of them is there
-    /// afterwards.
-    async fn migrate_turns_columns(conn: &Connection) -> bool {
-        let Some(present) = Self::turns_columns(conn).await else {
-            return false;
-        };
-        let has = |column: &str| present.iter().any(|name| name == column);
-        if !has("agent") {
-            let _ = conn
-                .execute(
-                    "ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'",
-                    (),
-                )
-                .await;
-        }
-        if !has("credits") {
-            let _ = conn
-                .execute("ALTER TABLE turns ADD COLUMN credits INTEGER", ())
-                .await;
-        }
-        if !has("tool_result_tokens") {
-            // Backfilled as 0 rather than recomputed: the figure comes from
-            // transcript lines this database does not keep, and re-reading
-            // every session to fill history in would cost more than the metric
-            // is worth. Turns parsed from here on carry it (#474).
-            let _ = conn
-                .execute(
-                    "ALTER TABLE turns ADD COLUMN tool_result_tokens INTEGER NOT NULL DEFAULT 0",
-                    (),
-                )
-                .await;
-        }
-        // Turn detail (who ran the turn and how), and what a later line of a
-        // message is merged against. Left NULL on rows parsed before, for the
-        // reason given for `tool_result_tokens` above.
-        for (column, ddl) in TURN_DETAIL_COLUMNS.into_iter().chain(TURN_MERGE_COLUMNS) {
-            if !has(column) {
-                let _ = conn.execute(ddl, ()).await;
-            }
-        }
-        // After the columns: on a database that predates `run_id`, an index
-        // in the CREATE batch would fail and the whole open with it.
-        let _ = conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)",
-                (),
-            )
-            .await;
-        // An ALTER also fails when a concurrent open added the column first,
-        // so its result is not the test: the column being there now is.
-        // Column names compare as SQLite compares them, ignoring ASCII case.
-        Self::turns_columns(conn).await.is_some_and(|now| {
-            ["agent", "credits", "tool_result_tokens"]
-                .into_iter()
-                .chain(TURN_DETAIL_COLUMNS.map(|(column, _)| column))
-                .chain(TURN_MERGE_COLUMNS.map(|(column, _)| column))
-                .all(|column| now.iter().any(|name| name.eq_ignore_ascii_case(column)))
-        })
-    }
-
-    /// The names of the `turns` columns, or `None` when they cannot be read.
-    async fn turns_columns(conn: &Connection) -> Option<Vec<String>> {
-        let mut rows = conn.query("PRAGMA table_info(turns)", ()).await.ok()?;
-        let mut names = Vec::new();
-        while let Some(row) = rows.next().await.ok()? {
-            names.push(row.get::<String>(1).ok()?);
-        }
-        Some(names)
+    /// The schema version found, when newer than [`SCHEMA_VERSION`]. Such a
+    /// database is read only: reports read it, and ingestion is refused.
+    pub fn newer_schema(&self) -> Option<u32> {
+        self.newer_schema
     }
 
     /// Rewrites pre-existing project keys to their canonical form, once per DB.
@@ -1540,7 +1402,8 @@ mod tests {
 
     /// Processes opening a database that does not exist yet, at the same
     /// moment, all get it: the first switch of the new file to WAL fails at
-    /// once for the others, past the busy timeout.
+    /// once for the others, past the busy timeout. The schema is created once
+    /// (inkcast #248).
     #[test]
     fn concurrent_first_opens_all_succeed() {
         let runtime = || {
@@ -1549,7 +1412,6 @@ mod tests {
                 .build()
                 .unwrap()
         };
-        let mut failed = 0;
         for _ in 0..10 {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("global.db");
@@ -1560,16 +1422,16 @@ mod tests {
                     std::thread::spawn(move || {
                         let rt = runtime();
                         barrier.wait();
-                        rt.block_on(GlobalDb::open_at(&path)).is_none()
+                        rt.block_on(GlobalDb::open_at(&path))
+                            .map(|db| db.newer_schema())
                     })
                 })
                 .collect();
-            failed += opens
-                .into_iter()
-                .map(|open| open.join().unwrap())
-                .filter(|&none| none)
-                .count();
+            for open in opens {
+                assert_eq!(open.join().unwrap(), Some(None), "every open succeeds");
+            }
+            let version = runtime().block_on(schema_version_at(&path));
+            assert_eq!(version, Some(SCHEMA_VERSION));
         }
-        assert_eq!(failed, 0, "first opens that returned no database, of 80");
     }
 }

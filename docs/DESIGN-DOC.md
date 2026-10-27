@@ -375,6 +375,18 @@ subtracts the size of the tool's response, and accumulates the difference in the
 per-project database.
 
 A global database at `~/.tokensave/global.db` aggregates totals across all projects.
+
+`global.db` carries a schema version in SQLite's `PRAGMA user_version`. On open,
+`GlobalDb` applies each numbered migration above that version
+(`src/global_db/migrations.rs`), each in its own `BEGIN IMMEDIATE` transaction
+that also sets the version it reaches: a failed migration is rolled back and the
+open fails, and processes opening an old database at once apply each migration
+once. A database at the latest version is opened without any schema check. A
+database at a version newer than the binary knows is opened read only
+(`PRAGMA query_only`): reports read it, ingestion is refused, and the binary says
+so. Version 1 is the schema as it stood before versions were kept, reached from
+any earlier shape of it. A shipped migration is never edited; a schema change is
+a new migration at the end of the list.
 An opt-in worldwide counter (Cloudflare Worker) lets users contribute their totals
 anonymously. Upload is best-effort with 2-second timeouts and never blocks the CLI.
 

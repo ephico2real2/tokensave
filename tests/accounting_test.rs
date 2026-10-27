@@ -213,6 +213,11 @@ async fn a_failed_migration_does_not_open_the_database() {
         GlobalDb::open_at(&db_path).await.is_none(),
         "a half-migrated database is not opened"
     );
+    assert_eq!(user_version(&conn).await, 0, "the version is not moved");
+    assert!(
+        !turns_columns(&conn).await.contains(&"effort".to_string()),
+        "the columns added before the failure are rolled back"
+    );
 
     for i in 0..10 {
         conn.execute(&format!("ALTER TABLE turns DROP COLUMN pad{i}"), ())
@@ -225,9 +230,8 @@ async fn a_failed_migration_does_not_open_the_database() {
     assert!(db.insert_turn(&claude_turn("after", 1, 2)).await);
 }
 
-/// An ALTER that fails because the column is already there (a concurrent
-/// open added it first) still opens the database. A column named in another
-/// case is the same column to SQLite, and makes that ALTER fail every time.
+/// A column already there under another case is the same column to SQLite:
+/// it is not added again, which would fail, and the database opens.
 #[tokio::test]
 async fn a_column_added_elsewhere_still_opens_the_database() {
     let tmp = TempDir::new().unwrap();
@@ -258,6 +262,169 @@ async fn a_column_added_elsewhere_still_opens_the_database() {
         .await
         .expect("an existing column is a completed migration");
     assert!(db.insert_turn(&claude_turn("t1", 1, 2)).await);
+}
+
+/// A second connection to the database at `db_path`, for reading what
+/// `GlobalDb` wrote or changing it underneath.
+async fn side_connection(db_path: &std::path::Path) -> libsql::Connection {
+    let db = libsql::Builder::new_local(db_path).build().await.unwrap();
+    db.connect().unwrap()
+}
+
+async fn user_version(conn: &libsql::Connection) -> i64 {
+    let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
+    rows.next().await.unwrap().unwrap().get(0).unwrap()
+}
+
+async fn turns_columns(conn: &libsql::Connection) -> Vec<String> {
+    let mut rows = conn.query("PRAGMA table_info(turns)", ()).await.unwrap();
+    let mut names = Vec::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        names.push(row.get(1).unwrap());
+    }
+    names
+}
+
+/// Every row of `table`, each rendered as text, in rowid order.
+async fn table_rows(conn: &libsql::Connection, table: &str) -> Vec<String> {
+    let mut rows = conn
+        .query(&format!("SELECT * FROM {table} ORDER BY rowid"), ())
+        .await
+        .unwrap();
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.unwrap() {
+        let values: Vec<String> = (0..row.column_count())
+            .map(|i| format!("{:?}", row.get_value(i).unwrap()))
+            .collect();
+        out.push(values.join("|"));
+    }
+    out
+}
+
+/// The tables 7.16.0 creates, each with its columns at 7.16.0.
+const TABLES_7_16_0: [(&str, &str); 5] = [
+    ("projects", "path, tokens_saved"),
+    (
+        "turns",
+        "message_id, project_hash, session_id, model, timestamp, input_tokens, \
+         output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, category, \
+         tool_names, agent, credits, tool_result_tokens",
+    ),
+    ("parse_offsets", "file_path, byte_offset, mtime"),
+    (
+        "savings_ledger",
+        "id, ts, project_path, tool_name, before_tokens, after_tokens",
+    ),
+    ("meta", "key, value"),
+];
+
+/// The 7.16.0 columns of every row of every 7.16.0 table.
+async fn rows_7_16_0(conn: &libsql::Connection) -> Vec<Vec<String>> {
+    let mut all = Vec::new();
+    for (table, columns) in TABLES_7_16_0 {
+        let mut rows = conn
+            .query(&format!("SELECT {columns} FROM {table} ORDER BY rowid"), ())
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            let values: Vec<String> = (0..row.column_count())
+                .map(|i| format!("{:?}", row.get_value(i).unwrap()))
+                .collect();
+            out.push(format!("{table}: {}", values.join("|")));
+        }
+        all.push(out);
+    }
+    all
+}
+
+/// A database created by tokensave 7.16.0 opens, reaches the latest schema
+/// version, and keeps every row of every table (inkcast #248).
+#[tokio::test]
+async fn a_7_16_0_database_reaches_the_latest_version_with_every_row() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let side = side_connection(&db_path).await;
+    side.execute_batch(include_str!("fixtures/global_db_7_16_0.sql"))
+        .await
+        .unwrap();
+    let before = rows_7_16_0(&side).await;
+    assert!(before.iter().all(|rows| rows.len() == 1), "{before:?}");
+    assert_eq!(user_version(&side).await, 0);
+
+    let db = GlobalDb::open_at(&db_path)
+        .await
+        .expect("a 7.16.0 database opens");
+
+    assert_eq!(
+        user_version(&side).await,
+        i64::from(tokensave::global_db::SCHEMA_VERSION)
+    );
+    assert_eq!(db.newer_schema(), None);
+    assert_eq!(rows_7_16_0(&side).await, before, "every row kept");
+    assert_eq!(db.turn_detail("msg_716").await, Some(TurnDetail::default()));
+    assert!(db.insert_turn(&claude_turn("after", 1, 2)).await);
+}
+
+/// A database at the latest version is opened without looking at its
+/// columns: a column missing from it is not added back.
+#[tokio::test]
+async fn a_database_at_the_latest_version_runs_no_migration() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    drop(open_isolated_db(&tmp).await);
+    let side = side_connection(&db_path).await;
+    let version = user_version(&side).await;
+    assert_eq!(version, i64::from(tokensave::global_db::SCHEMA_VERSION));
+    side.execute("ALTER TABLE turns DROP COLUMN result_ids", ())
+        .await
+        .unwrap();
+
+    drop(open_isolated_db(&tmp).await);
+
+    assert!(!turns_columns(&side)
+        .await
+        .contains(&"result_ids".to_string()));
+    assert_eq!(user_version(&side).await, version);
+}
+
+/// A database whose schema is newer than this binary knows is read, never
+/// written: reports still see its rows, and nothing is added or changed.
+#[tokio::test]
+async fn a_database_newer_than_the_binary_is_read_only() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    let db = open_isolated_db(&tmp).await;
+    assert!(db.insert_turn(&claude_turn("t1", 10, 20)).await);
+    drop(db);
+    let newer = tokensave::global_db::SCHEMA_VERSION + 1;
+    let side = side_connection(&db_path).await;
+    side.execute_batch(&format!("PRAGMA user_version = {newer}"))
+        .await
+        .unwrap();
+    let before = table_rows(&side, "turns").await;
+
+    let db = GlobalDb::open_at(&db_path)
+        .await
+        .expect("a newer database opens for reading");
+
+    assert_eq!(db.newer_schema(), Some(newer));
+    assert_eq!(
+        db.cost_by_agent_since(0).await[0].turns,
+        1,
+        "reports read it"
+    );
+    assert!(!db.insert_turn(&claude_turn("t2", 1, 2)).await);
+    assert!(!db.add_tool_result_tokens("t1", "toolu_a", 5).await);
+    db.upsert(std::path::Path::new("/work/app"), 10).await;
+    assert_eq!(table_rows(&side, "turns").await, before);
+    assert!(table_rows(&side, "projects").await.is_empty());
+    assert_eq!(user_version(&side).await, i64::from(newer));
+    assert!(
+        tokensave::global_db::newer_schema_notice(newer).contains(&format!("version {newer}")),
+        "the notice names the database's version"
+    );
 }
 
 /// cost_by_agent_since groups by agent and returns all AgentCostSummary fields.

@@ -41,7 +41,7 @@ pub async fn run_doctor(agent_filter: Option<&str>) {
         ));
     }
 
-    check_global_db(&mut dc);
+    check_global_db(&mut dc).await;
     check_index_scope(&mut dc, &project_path);
     check_stale_stores(&mut dc).await;
     check_user_config(&mut dc);
@@ -121,17 +121,37 @@ fn check_binary(dc: &mut DoctorCounters) {
     dc.pass(&format!("Version: {}", env!("CARGO_PKG_VERSION")));
 }
 
-/// Check global database exists.
-fn check_global_db(dc: &mut DoctorCounters) {
+/// Check global database exists, and report its schema version.
+async fn check_global_db(dc: &mut DoctorCounters) {
     eprintln!("\n\x1b[1mGlobal database\x1b[0m");
     if let Some(db_path) = crate::global_db::global_db_path() {
         if db_path.exists() {
             dc.pass(&format!("Global DB: {}", db_path.display()));
+            match schema_line(crate::global_db::schema_version_at(&db_path).await) {
+                Ok(line) => dc.pass(&line),
+                Err(line) => dc.warn(&line),
+            }
         } else {
             dc.warn("Global DB not yet created (created on first sync)");
         }
     } else {
         dc.fail("Could not determine home directory for global DB");
+    }
+}
+
+/// The schema-version line for a database at `found`: `Ok` to pass, `Err`
+/// to warn.
+fn schema_line(found: Option<u32>) -> Result<String, String> {
+    use crate::global_db::{newer_schema_notice, SCHEMA_VERSION};
+    match found {
+        None => Err("Schema version could not be read".to_string()),
+        Some(found) if found > SCHEMA_VERSION => Err(newer_schema_notice(found)),
+        Some(found) if found < SCHEMA_VERSION => Ok(format!(
+            "Schema version {found}; migrated to {SCHEMA_VERSION} on the next open"
+        )),
+        Some(found) => Ok(format!(
+            "Schema version {found} (this tokensave: {SCHEMA_VERSION})"
+        )),
     }
 }
 
@@ -359,6 +379,29 @@ fn check_hook_freshness(dc: &mut DoctorCounters, project_path: &std::path::Path)
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// Doctor names the database's schema version and this binary's, and
+    /// warns about a database newer than the binary (inkcast #248).
+    #[test]
+    fn the_schema_version_line_names_both_versions() {
+        use crate::global_db::SCHEMA_VERSION;
+        assert_eq!(
+            schema_line(Some(SCHEMA_VERSION)),
+            Ok(format!(
+                "Schema version {SCHEMA_VERSION} (this tokensave: {SCHEMA_VERSION})"
+            ))
+        );
+        assert_eq!(
+            schema_line(Some(0)),
+            Ok(format!(
+                "Schema version 0; migrated to {SCHEMA_VERSION} on the next open"
+            ))
+        );
+        let newer = schema_line(Some(SCHEMA_VERSION + 1)).unwrap_err();
+        assert!(newer.contains(&format!("schema version {}", SCHEMA_VERSION + 1)));
+        assert!(newer.contains(&format!("({SCHEMA_VERSION})")));
+        assert!(schema_line(None).is_err());
+    }
 
     /// A project directory with an index of `db_bytes`, plus a small WAL, so
     /// the size check has something real to stat.

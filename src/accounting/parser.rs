@@ -462,6 +462,9 @@ impl IngestStats {
 /// coordinated ingest (via [`ingest_from_home`]).  Keeping this as a private
 /// helper avoids duplicating the offset-tracking loop.
 async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
+    if gdb.newer_schema().is_some() {
+        return IngestStats::empty();
+    }
     let (files, mut had_errors) = find_session_files(home);
     let claude_sessions = files.len() as u64;
 
@@ -616,6 +619,10 @@ async fn ingest_claude_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
 /// Ingest Claude sessions from `home` and Droid sessions from
 /// `home/.factory/sessions`.  Returns combined [`IngestStats`].
 pub(crate) async fn ingest_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
+    // A database newer than this binary is read only (inkcast #248).
+    if gdb.newer_schema().is_some() {
+        return IngestStats::empty();
+    }
     let mut stats = ingest_claude_from_home(gdb, home).await;
 
     // Droid ingestion from ~/.factory/sessions
@@ -639,6 +646,9 @@ pub(crate) async fn ingest_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats
 /// Pi stores one JSONL file per session and prices every message itself, so
 /// this source contributes its own cost rather than a computed one.
 async fn ingest_pi_from_home(gdb: &GlobalDb, home: &Path) -> IngestStats {
+    if gdb.newer_schema().is_some() {
+        return IngestStats::empty();
+    }
     let sessions = home.join(".pi").join("agent").join("sessions");
     let pi = crate::accounting::pi::ingest_dir(gdb, &sessions).await;
     IngestStats {
@@ -1067,16 +1077,17 @@ mod tests {
         let (home, _) = subagent_home(r#"{"agentType":"ob3"}"#);
         let db_path = db_tmp.path().join(".tokensave").join("global.db");
         let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
-        side.connect()
-            .unwrap()
-            .execute("DROP TABLE agent_runs", ())
+        let side = side.connect().unwrap();
+        side.execute("ALTER TABLE agent_runs RENAME TO agent_runs_away", ())
             .await
             .unwrap();
 
         let stats = ingest_claude_from_home(&gdb, home.path()).await;
         assert_eq!(stats.coverage[0].state, CoverageState::Partial);
 
-        let gdb = open_test_db(&db_tmp).await;
+        side.execute("ALTER TABLE agent_runs_away RENAME TO agent_runs", ())
+            .await
+            .unwrap();
         ingest_claude_from_home(&gdb, home.path()).await;
         assert_eq!(gdb.agent_run("a1b2c3").await.unwrap().role, "ob3");
     }
@@ -1565,5 +1576,35 @@ mod tests {
         std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         assert_eq!(stats.coverage[0].state, CoverageState::Complete);
+    }
+
+    /// A database newer than this binary is not ingested into, by any
+    /// source (inkcast #248).
+    #[tokio::test]
+    async fn a_database_newer_than_the_binary_is_not_ingested_into() {
+        let db_tmp = TempDir::new().unwrap();
+        drop(open_test_db(&db_tmp).await);
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute_batch(&format!(
+                "PRAGMA user_version = {}",
+                crate::global_db::SCHEMA_VERSION + 1
+            ))
+            .await
+            .unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[assistant_line("msg_a", 8, "null", TEXT)]);
+
+        let claude = ingest_claude_from_home(&gdb, home.path()).await;
+        let all = ingest_from_home(&gdb, home.path()).await;
+        let pi = ingest_pi_from_home(&gdb, home.path()).await;
+
+        for stats in [claude, all, pi] {
+            assert_eq!(stats.turns_inserted, 0);
+            assert!(stats.coverage.is_empty());
+        }
+        assert!(recorded(&db_tmp).await.is_empty());
     }
 }

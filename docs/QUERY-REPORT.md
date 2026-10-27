@@ -12,15 +12,15 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 ## Inventory summary
 
-- SQL-bearing source files: **37**.
-- SQL literal/template occurrences: **365**.
-- Functions retained for construction/binding context: **171**.
+- SQL-bearing source files: **38**.
+- SQL literal/template occurrences: **375**.
+- Functions retained for construction/binding context: **175**.
 
 ## Source file index
 
 | Source file | SQL occurrences |
 | --- | ---: |
-| [src/accounting/parser.rs](../src/accounting/parser.rs) | 6 |
+| [src/accounting/parser.rs](../src/accounting/parser.rs) | 8 |
 | [src/agents/hooks.rs](../src/agents/hooks.rs) | 4 |
 | [src/agents/mod.rs](../src/agents/mod.rs) | 1 |
 | [src/blame_engine.rs](../src/blame_engine.rs) | 16 |
@@ -43,7 +43,8 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 | [src/extraction/fstar_extractor.rs](../src/extraction/fstar_extractor.rs) | 2 |
 | [src/extraction/ruby_extractor.rs](../src/extraction/ruby_extractor.rs) | 1 |
 | [src/extraction/ruby_template_extractor.rs](../src/extraction/ruby_template_extractor.rs) | 1 |
-| [src/global_db.rs](../src/global_db.rs) | 58 |
+| [src/global_db.rs](../src/global_db.rs) | 40 |
+| [src/global_db/migrations.rs](../src/global_db/migrations.rs) | 26 |
 | [src/graph/imports.rs](../src/graph/imports.rs) | 1 |
 | [src/graph/queries.rs](../src/graph/queries.rs) | 5 |
 | [src/hooks.rs](../src/hooks.rs) | 1 |
@@ -64,15 +65,23 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 #### Q0356 — `a_run_that_failed_to_record_is_retried`
 
-Source: [src/accounting/parser.rs:1072](../src/accounting/parser.rs#L1072).
+Source: [src/accounting/parser.rs:1081](../src/accounting/parser.rs#L1081).
 
 ```sql
-DROP TABLE agent_runs
+ALTER TABLE agent_runs RENAME TO agent_runs_away
+```
+
+#### Q0377 — `a_run_that_failed_to_record_is_retried`
+
+Source: [src/accounting/parser.rs:1088](../src/accounting/parser.rs#L1088).
+
+```sql
+ALTER TABLE agent_runs_away RENAME TO agent_runs
 ```
 
 #### Q0361 — `stored_turn`
 
-Source: [src/accounting/parser.rs:1146](../src/accounting/parser.rs#L1146).
+Source: [src/accounting/parser.rs:1157](../src/accounting/parser.rs#L1157).
 
 ```sql
 SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
@@ -82,7 +91,7 @@ SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
 
 #### Q0362 — `a_transcript_read_twice_changes_no_turn`
 
-Source: [src/accounting/parser.rs:1249](../src/accounting/parser.rs#L1249).
+Source: [src/accounting/parser.rs:1260](../src/accounting/parser.rs#L1260).
 
 ```sql
 DELETE FROM parse_offsets
@@ -90,7 +99,7 @@ DELETE FROM parse_offsets
 
 #### Q0363 — `turn_after_two_reads`
 
-Source: [src/accounting/parser.rs:1337](../src/accounting/parser.rs#L1337).
+Source: [src/accounting/parser.rs:1348](../src/accounting/parser.rs#L1348).
 
 ```sql
 DELETE FROM parse_offsets
@@ -98,7 +107,7 @@ DELETE FROM parse_offsets
 
 #### Q0365 — `a_turn_recorded_before_result_ids_is_added_to_only_while_empty`
 
-Source: [src/accounting/parser.rs:1416](../src/accounting/parser.rs#L1416).
+Source: [src/accounting/parser.rs:1427](../src/accounting/parser.rs#L1427).
 
 ```sql
 UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'
@@ -106,10 +115,18 @@ UPDATE turns SET tool_result_tokens = 7 WHERE message_id = 'msg_k'
 
 #### Q0366 — `recorded`
 
-Source: [src/accounting/parser.rs:1445](../src/accounting/parser.rs#L1445).
+Source: [src/accounting/parser.rs:1456](../src/accounting/parser.rs#L1456).
 
 ```sql
 SELECT message_id FROM turns ORDER BY message_id
+```
+
+#### Q0378 — `a_database_newer_than_the_binary_is_not_ingested_into`
+
+Source: [src/accounting/parser.rs:1592](../src/accounting/parser.rs#L1592).
+
+```sql
+PRAGMA user_version = {}
 ```
 
 ### src/agents/hooks.rs
@@ -3119,97 +3136,17 @@ begin
 
 ### src/global_db.rs
 
-#### Q0343 — `module constant / top-level string`
+#### Q0376 — `open_with`
 
-Source: [src/global_db.rs:47](../src/global_db.rs#L47).
-
-```sql
-ALTER TABLE turns ADD COLUMN effort TEXT
-```
-
-#### Q0344 — `module constant / top-level string`
-
-Source: [src/global_db.rs:50](../src/global_db.rs#L50).
+Source: [src/global_db.rs:265](../src/global_db.rs#L265).
 
 ```sql
-ALTER TABLE turns ADD COLUMN requested_model TEXT
-```
-
-#### Q0345 — `module constant / top-level string`
-
-Source: [src/global_db.rs:54](../src/global_db.rs#L54).
-
-```sql
-ALTER TABLE turns ADD COLUMN thinking_tokens INTEGER
-```
-
-#### Q0346 — `module constant / top-level string`
-
-Source: [src/global_db.rs:58](../src/global_db.rs#L58).
-
-```sql
-ALTER TABLE turns ADD COLUMN thinking_ms INTEGER
-```
-
-#### Q0347 — `module constant / top-level string`
-
-Source: [src/global_db.rs:60](../src/global_db.rs#L60).
-
-```sql
-ALTER TABLE turns ADD COLUMN speed TEXT
-```
-
-#### Q0348 — `module constant / top-level string`
-
-Source: [src/global_db.rs:63](../src/global_db.rs#L63).
-
-```sql
-ALTER TABLE turns ADD COLUMN service_tier TEXT
-```
-
-#### Q0349 — `module constant / top-level string`
-
-Source: [src/global_db.rs:65](../src/global_db.rs#L65).
-
-```sql
-ALTER TABLE turns ADD COLUMN git_branch TEXT
-```
-
-#### Q0350 — `module constant / top-level string`
-
-Source: [src/global_db.rs:66](../src/global_db.rs#L66).
-
-```sql
-ALTER TABLE turns ADD COLUMN run_id TEXT
-```
-
-#### Q0357 — `module constant / top-level string`
-
-Source: [src/global_db.rs:78](../src/global_db.rs#L78).
-
-```sql
-ALTER TABLE turns ADD COLUMN tool_use_ids TEXT
-```
-
-#### Q0358 — `module constant / top-level string`
-
-Source: [src/global_db.rs:82](../src/global_db.rs#L82).
-
-```sql
-ALTER TABLE turns ADD COLUMN bash_signals INTEGER
-```
-
-#### Q0364 — `module constant / top-level string`
-
-Source: [src/global_db.rs:84](../src/global_db.rs#L84).
-
-```sql
-ALTER TABLE turns ADD COLUMN result_ids TEXT
+PRAGMA query_only = 1
 ```
 
 #### Q0255 — `apply_pragmas`
 
-Source: [src/global_db.rs:378](../src/global_db.rs#L378).
+Source: [src/global_db.rs:300](../src/global_db.rs#L300).
 
 ```sql
 PRAGMA busy_timeout = 5000;
@@ -3217,139 +3154,9 @@ PRAGMA busy_timeout = 5000;
                      PRAGMA synchronous = NORMAL;
 ```
 
-#### Q0256 — `open_at`
-
-Source: [src/global_db.rs:267](../src/global_db.rs#L267).
-
-```sql
-CREATE TABLE IF NOT EXISTS projects (
-                path TEXT PRIMARY KEY,
-                tokens_saved INTEGER NOT NULL DEFAULT 0
-            )
-```
-
-#### Q0257 — `open_at`
-
-Source: [src/global_db.rs:276](../src/global_db.rs#L276).
-
-```sql
-CREATE TABLE IF NOT EXISTS turns (
-                message_id TEXT PRIMARY KEY,
-                project_hash TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                input_tokens INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-                cost_usd REAL NOT NULL,
-                category TEXT NOT NULL,
-                tool_names TEXT NOT NULL DEFAULT '',
-                agent TEXT NOT NULL DEFAULT 'claude',
-                credits INTEGER,
-                tool_result_tokens INTEGER NOT NULL DEFAULT 0,
-                effort TEXT,
-                requested_model TEXT,
-                thinking_tokens INTEGER,
-                thinking_ms INTEGER,
-                speed TEXT,
-                service_tier TEXT,
-                git_branch TEXT,
-                run_id TEXT,
-                tool_use_ids TEXT,
-                bash_signals INTEGER,
-                result_ids TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
-            CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model);
-            CREATE TABLE IF NOT EXISTS agent_runs (
-                run_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                project_hash TEXT NOT NULL,
-                role TEXT NOT NULL,
-                description TEXT,
-                spawn_depth INTEGER,
-                parent_run_id TEXT,
-                tool_use_id TEXT,
-                model TEXT,
-                effort TEXT,
-                finished INTEGER,
-                worktree_branch TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id);
-            CREATE TABLE IF NOT EXISTS parse_offsets (
-                file_path TEXT PRIMARY KEY,
-                byte_offset INTEGER NOT NULL,
-                mtime INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS savings_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts INTEGER NOT NULL,
-                project_path TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                before_tokens INTEGER NOT NULL,
-                after_tokens INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_savings_ledger_ts ON savings_ledger(ts);
-            CREATE INDEX IF NOT EXISTS idx_savings_ledger_project ON savings_ledger(project_path)
-```
-
-#### Q0258 — `open_at`
-
-Source: [src/global_db.rs:342](../src/global_db.rs#L342).
-
-```sql
-CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-```
-
-#### Q0260 — `migrate_turns_columns`
-
-Source: [src/global_db.rs:416](../src/global_db.rs#L416).
-
-```sql
-ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
-```
-
-#### Q0261 — `migrate_turns_columns`
-
-Source: [src/global_db.rs:423](../src/global_db.rs#L423).
-
-```sql
-ALTER TABLE turns ADD COLUMN credits INTEGER
-```
-
-#### Q0262 — `migrate_turns_columns`
-
-Source: [src/global_db.rs:433](../src/global_db.rs#L433).
-
-```sql
-ALTER TABLE turns ADD COLUMN tool_result_tokens INTEGER NOT NULL DEFAULT 0
-```
-
-#### Q0351 — `migrate_turns_columns`
-
-Source: [src/global_db.rs:450](../src/global_db.rs#L450).
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)
-```
-
-#### Q0259 — `turns_columns`
-
-Source: [src/global_db.rs:468](../src/global_db.rs#L468).
-
-```sql
-PRAGMA table_info(turns)
-```
-
 #### Q0263 — `migrate_project_paths`
 
-Source: [src/global_db.rs:488](../src/global_db.rs#L488).
+Source: [src/global_db.rs:350](../src/global_db.rs#L350).
 
 ```sql
 SELECT 1 FROM meta WHERE key = 'projects_path_normalized'
@@ -3357,7 +3164,7 @@ SELECT 1 FROM meta WHERE key = 'projects_path_normalized'
 
 #### Q0264 — `migrate_project_paths`
 
-Source: [src/global_db.rs:499](../src/global_db.rs#L499).
+Source: [src/global_db.rs:361](../src/global_db.rs#L361).
 
 ```sql
 SELECT path, tokens_saved FROM projects
@@ -3365,7 +3172,7 @@ SELECT path, tokens_saved FROM projects
 
 #### Q0265 — `migrate_project_paths`
 
-Source: [src/global_db.rs:528](../src/global_db.rs#L528).
+Source: [src/global_db.rs:390](../src/global_db.rs#L390).
 
 ```sql
 DELETE FROM projects
@@ -3373,7 +3180,7 @@ DELETE FROM projects
 
 #### Q0266 — `migrate_project_paths`
 
-Source: [src/global_db.rs:534](../src/global_db.rs#L534).
+Source: [src/global_db.rs:396](../src/global_db.rs#L396).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3381,7 +3188,7 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0267 — `migrate_project_paths`
 
-Source: [src/global_db.rs:544](../src/global_db.rs#L544).
+Source: [src/global_db.rs:406](../src/global_db.rs#L406).
 
 ```sql
 UPDATE savings_ledger SET project_path = ?1 WHERE project_path = ?2
@@ -3389,7 +3196,7 @@ UPDATE savings_ledger SET project_path = ?1 WHERE project_path = ?2
 
 #### Q0268 — `migrate_project_paths`
 
-Source: [src/global_db.rs:553](../src/global_db.rs#L553).
+Source: [src/global_db.rs:415](../src/global_db.rs#L415).
 
 ```sql
 INSERT OR REPLACE INTO meta (key, value) VALUES ('projects_path_normalized', '1')
@@ -3397,7 +3204,7 @@ INSERT OR REPLACE INTO meta (key, value) VALUES ('projects_path_normalized', '1'
 
 #### Q0269 — `upsert`
 
-Source: [src/global_db.rs:568](../src/global_db.rs#L568).
+Source: [src/global_db.rs:430](../src/global_db.rs#L430).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3406,7 +3213,7 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0270 — `get_project_tokens`
 
-Source: [src/global_db.rs:581](../src/global_db.rs#L581).
+Source: [src/global_db.rs:443](../src/global_db.rs#L443).
 
 ```sql
 SELECT tokens_saved FROM projects WHERE path = ?1
@@ -3414,7 +3221,7 @@ SELECT tokens_saved FROM projects WHERE path = ?1
 
 #### Q0271 — `global_tokens_saved`
 
-Source: [src/global_db.rs:598](../src/global_db.rs#L598).
+Source: [src/global_db.rs:460](../src/global_db.rs#L460).
 
 ```sql
 SELECT COALESCE(SUM(tokens_saved), 0) FROM projects
@@ -3422,7 +3229,7 @@ SELECT COALESCE(SUM(tokens_saved), 0) FROM projects
 
 #### Q0272 — `record_savings`
 
-Source: [src/global_db.rs:620](../src/global_db.rs#L620).
+Source: [src/global_db.rs:482](../src/global_db.rs#L482).
 
 ```sql
 INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_tokens) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -3430,7 +3237,7 @@ INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_to
 
 #### Q0273 — `sum_savings`
 
-Source: [src/global_db.rs:634](../src/global_db.rs#L634).
+Source: [src/global_db.rs:496](../src/global_db.rs#L496).
 
 ```sql
 SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE project_path = ?1 AND ts >= ?2
@@ -3438,7 +3245,7 @@ SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - 
 
 #### Q0274 — `sum_savings`
 
-Source: [src/global_db.rs:637](../src/global_db.rs#L637).
+Source: [src/global_db.rs:499](../src/global_db.rs#L499).
 
 ```sql
 SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE ts >= ?1
@@ -3446,7 +3253,7 @@ SELECT COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - 
 
 #### Q0275 — `savings_history`
 
-Source: [src/global_db.rs:665](../src/global_db.rs#L665).
+Source: [src/global_db.rs:527](../src/global_db.rs#L527).
 
 ```sql
 SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE project_path = ?1 AND ts >= ?2 GROUP BY day ORDER BY day DESC
@@ -3454,7 +3261,7 @@ SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tok
 
 #### Q0276 — `savings_history`
 
-Source: [src/global_db.rs:671](../src/global_db.rs#L671).
+Source: [src/global_db.rs:533](../src/global_db.rs#L533).
 
 ```sql
 SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tokens THEN before_tokens - after_tokens ELSE 0 END), 0), COUNT(*) FROM savings_ledger WHERE ts >= ?1 GROUP BY day ORDER BY day DESC
@@ -3462,7 +3269,7 @@ SELECT (ts/86400)*86400 AS day, COALESCE(SUM(CASE WHEN before_tokens > after_tok
 
 #### Q0277 — `delete_project`
 
-Source: [src/global_db.rs:700](../src/global_db.rs#L700).
+Source: [src/global_db.rs:562](../src/global_db.rs#L562).
 
 ```sql
 DELETE FROM projects WHERE path = ?1
@@ -3470,7 +3277,7 @@ DELETE FROM projects WHERE path = ?1
 
 #### Q0278 — `delete_projects`
 
-Source: [src/global_db.rs:719](../src/global_db.rs#L719).
+Source: [src/global_db.rs:581](../src/global_db.rs#L581).
 
 ```sql
 DELETE FROM projects WHERE path IN ({})
@@ -3478,7 +3285,7 @@ DELETE FROM projects WHERE path IN ({})
 
 #### Q0279 — `list_project_paths`
 
-Source: [src/global_db.rs:735](../src/global_db.rs#L735).
+Source: [src/global_db.rs:597](../src/global_db.rs#L597).
 
 ```sql
 SELECT path FROM projects
@@ -3486,7 +3293,7 @@ SELECT path FROM projects
 
 #### Q0280 — `insert_turn_row`
 
-Source: [src/global_db.rs:777](../src/global_db.rs#L777).
+Source: [src/global_db.rs:639](../src/global_db.rs#L639).
 
 ```sql
 INSERT OR IGNORE INTO turns
@@ -3502,7 +3309,7 @@ INSERT OR IGNORE INTO turns
 
 #### Q0359 — `turn_state`
 
-Source: [src/global_db.rs:866](../src/global_db.rs#L866).
+Source: [src/global_db.rs:728](../src/global_db.rs#L728).
 
 ```sql
 SELECT model, input_tokens, output_tokens, cache_write_tokens,
@@ -3513,7 +3320,7 @@ SELECT model, input_tokens, output_tokens, cache_write_tokens,
 
 #### Q0360 — `write_turn_state`
 
-Source: [src/global_db.rs:903](../src/global_db.rs#L903).
+Source: [src/global_db.rs:765](../src/global_db.rs#L765).
 
 ```sql
 UPDATE turns SET
@@ -3527,7 +3334,7 @@ UPDATE turns SET
 
 #### Q0352 — `turn_detail`
 
-Source: [src/global_db.rs:936](../src/global_db.rs#L936).
+Source: [src/global_db.rs:798](../src/global_db.rs#L798).
 
 ```sql
 SELECT effort, requested_model, thinking_tokens, thinking_ms,
@@ -3537,7 +3344,7 @@ SELECT effort, requested_model, thinking_tokens, thinking_ms,
 
 #### Q0353 — `upsert_agent_run`
 
-Source: [src/global_db.rs:962](../src/global_db.rs#L962).
+Source: [src/global_db.rs:824](../src/global_db.rs#L824).
 
 ```sql
 INSERT INTO agent_runs
@@ -3560,7 +3367,7 @@ INSERT INTO agent_runs
 
 #### Q0354 — `agent_run`
 
-Source: [src/global_db.rs:1002](../src/global_db.rs#L1002).
+Source: [src/global_db.rs:864](../src/global_db.rs#L864).
 
 ```sql
 SELECT run_id, session_id, project_hash, role, description, spawn_depth,
@@ -3570,7 +3377,7 @@ SELECT run_id, session_id, project_hash, role, description, spawn_depth,
 
 #### Q0281 — `add_tool_result_tokens`
 
-Source: [src/global_db.rs:1059](../src/global_db.rs#L1059).
+Source: [src/global_db.rs:921](../src/global_db.rs#L921).
 
 ```sql
 UPDATE turns SET
@@ -3584,7 +3391,7 @@ UPDATE turns SET
 
 #### Q0282 — `upsert_droid_turn`
 
-Source: [src/global_db.rs:1087](../src/global_db.rs#L1087).
+Source: [src/global_db.rs:949](../src/global_db.rs#L949).
 
 ```sql
 INSERT INTO turns
@@ -3626,7 +3433,7 @@ INSERT INTO turns
 
 #### Q0283 — `total_cost_since`
 
-Source: [src/global_db.rs:1148](../src/global_db.rs#L1148).
+Source: [src/global_db.rs:1010](../src/global_db.rs#L1010).
 
 ```sql
 SELECT COALESCE(SUM(cost_usd), 0.0) FROM turns WHERE timestamp >= ?1
@@ -3634,7 +3441,7 @@ SELECT COALESCE(SUM(cost_usd), 0.0) FROM turns WHERE timestamp >= ?1
 
 #### Q0284 — `total_tokens_since`
 
-Source: [src/global_db.rs:1162](../src/global_db.rs#L1162).
+Source: [src/global_db.rs:1024](../src/global_db.rs#L1024).
 
 ```sql
 SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM turns WHERE timestamp >= ?1
@@ -3642,7 +3449,7 @@ SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM turns WHERE timestamp
 
 #### Q0285 — `token_breakdown_since`
 
-Source: [src/global_db.rs:1177](../src/global_db.rs#L1177).
+Source: [src/global_db.rs:1039](../src/global_db.rs#L1039).
 
 ```sql
 SELECT COALESCE(SUM(input_tokens), 0),
@@ -3654,7 +3461,7 @@ SELECT COALESCE(SUM(input_tokens), 0),
 
 #### Q0286 — `cost_by_model_since`
 
-Source: [src/global_db.rs:1207](../src/global_db.rs#L1207).
+Source: [src/global_db.rs:1069](../src/global_db.rs#L1069).
 
 ```sql
 SELECT model, SUM(cost_usd),
@@ -3665,7 +3472,7 @@ SELECT model, SUM(cost_usd),
 
 #### Q0287 — `cost_by_category_since`
 
-Source: [src/global_db.rs:1233](../src/global_db.rs#L1233).
+Source: [src/global_db.rs:1095](../src/global_db.rs#L1095).
 
 ```sql
 SELECT category, SUM(cost_usd), COUNT(*)
@@ -3675,7 +3482,7 @@ SELECT category, SUM(cost_usd), COUNT(*)
 
 #### Q0288 — `nav_turns_since`
 
-Source: [src/global_db.rs:1270](../src/global_db.rs#L1270).
+Source: [src/global_db.rs:1132](../src/global_db.rs#L1132).
 
 ```sql
 SELECT tool_names, tool_result_tokens FROM turns WHERE timestamp >= ?1 AND agent = 'claude'
@@ -3683,7 +3490,7 @@ SELECT tool_names, tool_result_tokens FROM turns WHERE timestamp >= ?1 AND agent
 
 #### Q0289 — `cost_by_agent_since`
 
-Source: [src/global_db.rs:1294](../src/global_db.rs#L1294).
+Source: [src/global_db.rs:1156](../src/global_db.rs#L1156).
 
 ```sql
 SELECT agent,
@@ -3700,7 +3507,7 @@ SELECT agent,
 
 #### Q0290 — `get_parse_offset`
 
-Source: [src/global_db.rs:1342](../src/global_db.rs#L1342).
+Source: [src/global_db.rs:1204](../src/global_db.rs#L1204).
 
 ```sql
 SELECT byte_offset, mtime FROM parse_offsets WHERE file_path = ?1
@@ -3708,7 +3515,7 @@ SELECT byte_offset, mtime FROM parse_offsets WHERE file_path = ?1
 
 #### Q0291 — `set_parse_offset`
 
-Source: [src/global_db.rs:1358](../src/global_db.rs#L1358).
+Source: [src/global_db.rs:1220](../src/global_db.rs#L1220).
 
 ```sql
 INSERT INTO parse_offsets (file_path, byte_offset, mtime) VALUES (?1, ?2, ?3)
@@ -3717,7 +3524,7 @@ INSERT INTO parse_offsets (file_path, byte_offset, mtime) VALUES (?1, ?2, ?3)
 
 #### Q0292 — `checkpoint`
 
-Source: [src/global_db.rs:1369](../src/global_db.rs#L1369).
+Source: [src/global_db.rs:1231](../src/global_db.rs#L1231).
 
 ```sql
 PRAGMA wal_checkpoint(TRUNCATE);
@@ -3725,7 +3532,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 
 #### Q0293 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1469](../src/global_db.rs#L1469).
+Source: [src/global_db.rs:1331](../src/global_db.rs#L1331).
 
 ```sql
 DELETE FROM meta WHERE key = 'projects_path_normalized';
@@ -3734,7 +3541,7 @@ DELETE FROM meta WHERE key = 'projects_path_normalized';
 
 #### Q0294 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1481](../src/global_db.rs#L1481).
+Source: [src/global_db.rs:1343](../src/global_db.rs#L1343).
 
 ```sql
 INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
@@ -3742,10 +3549,288 @@ INSERT INTO projects (path, tokens_saved) VALUES (?1, ?2)
 
 #### Q0295 — `migration_merges_duplicates_and_drops_relative_rows`
 
-Source: [src/global_db.rs:1490](../src/global_db.rs#L1490).
+Source: [src/global_db.rs:1352](../src/global_db.rs#L1352).
 
 ```sql
 INSERT INTO savings_ledger (ts, project_path, tool_name, before_tokens, after_tokens) VALUES (42, ?1, 'tokensave_context', 1000, 100)
+```
+
+### src/global_db/migrations.rs
+
+#### Q0257 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:51](../src/global_db/migrations.rs#L51).
+
+```sql
+CREATE TABLE IF NOT EXISTS projects (
+            path TEXT PRIMARY KEY,
+            tokens_saved INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS turns (
+            message_id TEXT PRIMARY KEY,
+            project_hash TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL,
+            category TEXT NOT NULL,
+            tool_names TEXT NOT NULL DEFAULT '',
+            agent TEXT NOT NULL DEFAULT 'claude',
+            credits INTEGER,
+            tool_result_tokens INTEGER NOT NULL DEFAULT 0,
+            effort TEXT,
+            requested_model TEXT,
+            thinking_tokens INTEGER,
+            thinking_ms INTEGER,
+            speed TEXT,
+            service_tier TEXT,
+            git_branch TEXT,
+            run_id TEXT,
+            tool_use_ids TEXT,
+            bash_signals INTEGER,
+            result_ids TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project_hash);
+        CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model);
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            run_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            project_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            description TEXT,
+            spawn_depth INTEGER,
+            parent_run_id TEXT,
+            tool_use_id TEXT,
+            model TEXT,
+            effort TEXT,
+            finished INTEGER,
+            worktree_branch TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id);
+        CREATE TABLE IF NOT EXISTS parse_offsets (
+            file_path TEXT PRIMARY KEY,
+            byte_offset INTEGER NOT NULL,
+            mtime INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS savings_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            project_path TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            before_tokens INTEGER NOT NULL,
+            after_tokens INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_savings_ledger_ts ON savings_ledger(ts);
+        CREATE INDEX IF NOT EXISTS idx_savings_ledger_project ON savings_ledger(project_path);
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+```
+
+#### Q0260 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:131](../src/global_db/migrations.rs#L131).
+
+```sql
+ALTER TABLE turns ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
+```
+
+#### Q0261 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:133](../src/global_db/migrations.rs#L133).
+
+```sql
+ALTER TABLE turns ADD COLUMN credits INTEGER
+```
+
+#### Q0262 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:136](../src/global_db/migrations.rs#L136).
+
+```sql
+ALTER TABLE turns ADD COLUMN tool_result_tokens INTEGER NOT NULL DEFAULT 0
+```
+
+#### Q0343 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:138](../src/global_db/migrations.rs#L138).
+
+```sql
+ALTER TABLE turns ADD COLUMN effort TEXT
+```
+
+#### Q0344 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:141](../src/global_db/migrations.rs#L141).
+
+```sql
+ALTER TABLE turns ADD COLUMN requested_model TEXT
+```
+
+#### Q0345 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:145](../src/global_db/migrations.rs#L145).
+
+```sql
+ALTER TABLE turns ADD COLUMN thinking_tokens INTEGER
+```
+
+#### Q0346 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:149](../src/global_db/migrations.rs#L149).
+
+```sql
+ALTER TABLE turns ADD COLUMN thinking_ms INTEGER
+```
+
+#### Q0347 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:151](../src/global_db/migrations.rs#L151).
+
+```sql
+ALTER TABLE turns ADD COLUMN speed TEXT
+```
+
+#### Q0348 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:154](../src/global_db/migrations.rs#L154).
+
+```sql
+ALTER TABLE turns ADD COLUMN service_tier TEXT
+```
+
+#### Q0349 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:156](../src/global_db/migrations.rs#L156).
+
+```sql
+ALTER TABLE turns ADD COLUMN git_branch TEXT
+```
+
+#### Q0350 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:157](../src/global_db/migrations.rs#L157).
+
+```sql
+ALTER TABLE turns ADD COLUMN run_id TEXT
+```
+
+#### Q0357 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:160](../src/global_db/migrations.rs#L160).
+
+```sql
+ALTER TABLE turns ADD COLUMN tool_use_ids TEXT
+```
+
+#### Q0358 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:164](../src/global_db/migrations.rs#L164).
+
+```sql
+ALTER TABLE turns ADD COLUMN bash_signals INTEGER
+```
+
+#### Q0364 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:166](../src/global_db/migrations.rs#L166).
+
+```sql
+ALTER TABLE turns ADD COLUMN result_ids TEXT
+```
+
+#### Q0351 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:171](../src/global_db/migrations.rs#L171).
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_turns_run ON turns(run_id)
+```
+
+#### Q0367 — `apply`
+
+Source: [src/global_db/migrations.rs:253](../src/global_db/migrations.rs#L253).
+
+```sql
+PRAGMA user_version = {}
+```
+
+#### Q0259 — `column_names`
+
+Source: [src/global_db/migrations.rs:291](../src/global_db/migrations.rs#L291).
+
+```sql
+PRAGMA table_info({table})
+```
+
+#### Q0368 — `user_version`
+
+Source: [src/global_db/migrations.rs:304](../src/global_db/migrations.rs#L304).
+
+```sql
+PRAGMA user_version
+```
+
+#### Q0369 — `tables`
+
+Source: [src/global_db/migrations.rs:329](../src/global_db/migrations.rs#L329).
+
+```sql
+SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name
+```
+
+#### Q0370 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:344](../src/global_db/migrations.rs#L344).
+
+```sql
+CREATE TABLE a (x INTEGER)
+```
+
+#### Q0371 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:349](../src/global_db/migrations.rs#L349).
+
+```sql
+CREATE TABLE b (x INTEGER)
+```
+
+#### Q0372 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:352](../src/global_db/migrations.rs#L352).
+
+```sql
+ALTER TABLE a ADD COLUMN y INTEGER
+```
+
+#### Q0373 — `module constant / top-level string`
+
+Source: [src/global_db/migrations.rs:354](../src/global_db/migrations.rs#L354).
+
+```sql
+CREATE TABLE b (x INTEGER)
+```
+
+#### Q0374 — `a_newer_or_foreign_version_is_not_migrated`
+
+Source: [src/global_db/migrations.rs:388](../src/global_db/migrations.rs#L388).
+
+```sql
+PRAGMA user_version = {}
+```
+
+#### Q0375 — `a_newer_or_foreign_version_is_not_migrated`
+
+Source: [src/global_db/migrations.rs:397](../src/global_db/migrations.rs#L397).
+
+```sql
+PRAGMA user_version = -1
 ```
 
 ### src/graph/imports.rs
@@ -4200,6 +4285,39 @@ commit
 ## Dynamic construction and binding context
 
 The following source functions contain SQL plus formatting, clause assembly, or shared SQL fragments. They preserve the branching logic, escaping, placeholder generation, value binding, and batch assembly needed to understand the templates above. Some formatting is only error-message construction; those functions are retained conservatively to avoid omitting relevant context. Helper-only builders are included separately below.
+
+### `a_database_newer_than_the_binary_is_not_ingested_into` — src/accounting/parser.rs:1584
+
+Source: [src/accounting/parser.rs:1584](../src/accounting/parser.rs#L1584).
+
+```rust
+    async fn a_database_newer_than_the_binary_is_not_ingested_into() {
+        let db_tmp = TempDir::new().unwrap();
+        drop(open_test_db(&db_tmp).await);
+        let db_path = db_tmp.path().join(".tokensave").join("global.db");
+        let side = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        side.connect()
+            .unwrap()
+            .execute_batch(&format!(
+                "PRAGMA user_version = {}",
+                crate::global_db::SCHEMA_VERSION + 1
+            ))
+            .await
+            .unwrap();
+        let gdb = open_test_db(&db_tmp).await;
+        let (home, _) = session_home(&[assistant_line("msg_a", 8, "null", TEXT)]);
+
+        let claude = ingest_claude_from_home(&gdb, home.path()).await;
+        let all = ingest_from_home(&gdb, home.path()).await;
+        let pi = ingest_pi_from_home(&gdb, home.path()).await;
+
+        for stats in [claude, all, pi] {
+            assert_eq!(stats.turns_inserted, 0);
+            assert!(stats.coverage.is_empty());
+        }
+        assert!(recorded(&db_tmp).await.is_empty());
+    }
+```
 
 ### `global_forwarder_runs_repository_hook_from_linked_worktree` — src/agents/hooks.rs:2342
 
@@ -11357,9 +11475,9 @@ pub async fn audit(db: &Database, limit: usize) -> Result<EdgeAudit> {
 }
 ```
 
-### `delete_projects` — src/global_db.rs:710
+### `delete_projects` — src/global_db.rs:572
 
-Source: [src/global_db.rs:710](../src/global_db.rs#L710).
+Source: [src/global_db.rs:572](../src/global_db.rs#L572).
 
 ```rust
     pub async fn delete_projects(&self, project_paths: &[String]) -> usize {
@@ -11386,9 +11504,9 @@ Source: [src/global_db.rs:710](../src/global_db.rs#L710).
     }
 ```
 
-### `migration_merges_duplicates_and_drops_relative_rows` — src/global_db.rs:1456
+### `migration_merges_duplicates_and_drops_relative_rows` — src/global_db.rs:1318
 
-Source: [src/global_db.rs:1456](../src/global_db.rs#L1456).
+Source: [src/global_db.rs:1318](../src/global_db.rs#L1318).
 
 ```rust
     async fn migration_merges_duplicates_and_drops_relative_rows() {
@@ -11439,6 +11557,95 @@ Source: [src/global_db.rs:1456](../src/global_db.rs#L1456).
         assert_eq!(db.get_project_tokens(&project).await, 26_000);
         // The ledger row written under the old spelling still answers for the project.
         assert_eq!(db.sum_savings(Some(&canonical), 0).await.calls, 1);
+    }
+```
+
+### `apply` — src/global_db/migrations.rs:232
+
+Source: [src/global_db/migrations.rs:232](../src/global_db/migrations.rs#L232).
+
+```rust
+async fn apply(
+    conn: &Connection,
+    migration: &Migration,
+    latest: u32,
+) -> libsql::Result<Option<u32>> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await?;
+    let applied: libsql::Result<Option<u32>> = async {
+        // Read again under the lock: another process may have migrated
+        // while this one waited for it.
+        let now = user_version(&tx).await?;
+        if now > latest {
+            return Ok(Some(now));
+        }
+        if now >= migration.version {
+            return Ok(None);
+        }
+        for step in migration.steps {
+            run(&tx, step).await?;
+        }
+        tx.execute_batch(&format!("PRAGMA user_version = {}", migration.version))
+            .await?;
+        Ok(None)
+    }
+    .await;
+    match applied {
+        Ok(newer) => {
+            tx.commit().await?;
+            Ok(newer)
+        }
+        Err(error) => {
+            // Rolled back here so the outcome is not left to `Drop`; if the
+            // ROLLBACK itself fails, libsql's `Drop` panics either way.
+            let _ = tx.rollback().await;
+            Err(error)
+        }
+    }
+}
+```
+
+### `column_names` — src/global_db/migrations.rs:289
+
+Source: [src/global_db/migrations.rs:289](../src/global_db/migrations.rs#L289).
+
+```rust
+async fn column_names(conn: &Connection, table: &str) -> libsql::Result<Vec<String>> {
+    let mut rows = conn
+        .query(&format!("PRAGMA table_info({table})"), ())
+        .await?;
+    let mut names = Vec::new();
+    while let Some(row) = rows.next().await? {
+        names.push(row.get::<String>(1)?);
+    }
+    Ok(names)
+}
+```
+
+### `a_newer_or_foreign_version_is_not_migrated` — src/global_db/migrations.rs:386
+
+Source: [src/global_db/migrations.rs:386](../src/global_db/migrations.rs#L386).
+
+```rust
+    async fn a_newer_or_foreign_version_is_not_migrated() {
+        let (_tmp, conn) = connection().await;
+        conn.execute_batch(&format!("PRAGMA user_version = {}", LATEST + 1))
+            .await
+            .unwrap();
+        assert_eq!(
+            migrate(&conn, MIGRATIONS).await.unwrap(),
+            Outcome::Newer(LATEST + 1)
+        );
+        assert!(tables(&conn).await.is_empty());
+
+        conn.execute_batch("PRAGMA user_version = -1")
+            .await
+            .unwrap();
+        assert_eq!(
+            migrate(&conn, MIGRATIONS).await.unwrap(),
+            Outcome::Newer(u32::MAX)
+        );
     }
 ```
 
@@ -13008,9 +13215,9 @@ Source: [src/db/queries/nodes.rs:78](../src/db/queries/nodes.rs#L78).
     }
 ```
 
-### `upsert` — src/global_db.rs:563
+### `upsert` — src/global_db.rs:425
 
-Source: [src/global_db.rs:563](../src/global_db.rs#L563).
+Source: [src/global_db.rs:425](../src/global_db.rs#L425).
 
 ```rust
     pub async fn upsert(&self, project_path: &Path, tokens_saved: u64) {
@@ -13026,9 +13233,9 @@ Source: [src/global_db.rs:563](../src/global_db.rs#L563).
     }
 ```
 
-### `upsert_droid_turn` — src/global_db.rs:1084
+### `upsert_droid_turn` — src/global_db.rs:946
 
-Source: [src/global_db.rs:1084](../src/global_db.rs#L1084).
+Source: [src/global_db.rs:946](../src/global_db.rs#L946).
 
 ```rust
     pub async fn upsert_droid_turn(&self, turn: &crate::types::CostTurn) -> bool {
