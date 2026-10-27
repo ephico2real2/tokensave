@@ -13,14 +13,14 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 ## Inventory summary
 
 - SQL-bearing source files: **37**.
-- SQL literal/template occurrences: **361**.
+- SQL literal/template occurrences: **362**.
 - Functions retained for construction/binding context: **171**.
 
 ## Source file index
 
 | Source file | SQL occurrences |
 | --- | ---: |
-| [src/accounting/parser.rs](../src/accounting/parser.rs) | 3 |
+| [src/accounting/parser.rs](../src/accounting/parser.rs) | 4 |
 | [src/agents/hooks.rs](../src/agents/hooks.rs) | 4 |
 | [src/agents/mod.rs](../src/agents/mod.rs) | 1 |
 | [src/blame_engine.rs](../src/blame_engine.rs) | 16 |
@@ -64,7 +64,7 @@ Entries are grouped by source file and retain separate occurrences, even when SQ
 
 #### Q0356 — `a_run_that_failed_to_record_is_retried`
 
-Source: [src/accounting/parser.rs:1056](../src/accounting/parser.rs#L1056).
+Source: [src/accounting/parser.rs:1060](../src/accounting/parser.rs#L1060).
 
 ```sql
 DROP TABLE agent_runs
@@ -72,7 +72,7 @@ DROP TABLE agent_runs
 
 #### Q0361 — `stored_turn`
 
-Source: [src/accounting/parser.rs:1130](../src/accounting/parser.rs#L1130).
+Source: [src/accounting/parser.rs:1134](../src/accounting/parser.rs#L1134).
 
 ```sql
 SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
@@ -82,7 +82,15 @@ SELECT tool_names, category, output_tokens, cost_usd, tool_use_ids,
 
 #### Q0362 — `a_transcript_read_twice_changes_no_turn`
 
-Source: [src/accounting/parser.rs:1233](../src/accounting/parser.rs#L1233).
+Source: [src/accounting/parser.rs:1237](../src/accounting/parser.rs#L1237).
+
+```sql
+DELETE FROM parse_offsets
+```
+
+#### Q0363 — `turn_after_two_reads`
+
+Source: [src/accounting/parser.rs:1325](../src/accounting/parser.rs#L1325).
 
 ```sql
 DELETE FROM parse_offsets
