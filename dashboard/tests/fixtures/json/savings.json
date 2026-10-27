@@ -1,0 +1,59 @@
+{
+  "savedTokens": 6900000,
+  "beforeTokens": 7800000,
+  "afterTokens": 900000,
+  "graphCalls": 2418,
+  "missedTokens": 3400000,
+  "byTool": [
+    {
+      "tool": "tokensave_context",
+      "savedTokens": 2900000,
+      "share": 0.42
+    },
+    {
+      "tool": "tokensave_search",
+      "savedTokens": 1600000,
+      "share": 0.23
+    },
+    {
+      "tool": "tokensave_impact",
+      "savedTokens": 900000,
+      "share": 0.13
+    },
+    {
+      "tool": "tokensave_files",
+      "savedTokens": 700000,
+      "share": 0.1
+    },
+    {
+      "tool": "tokensave_diff",
+      "savedTokens": 500000,
+      "share": 0.07
+    },
+    {
+      "tool": "other",
+      "savedTokens": 300000,
+      "share": 0.05
+    }
+  ],
+  "missed": [
+    {
+      "kind": "Whole-file reads",
+      "tokens": 2100000,
+      "turns": 1204,
+      "instead": "outline / read / node"
+    },
+    {
+      "kind": "Symbol searches with grep",
+      "tokens": 900000,
+      "turns": 611,
+      "instead": "search / callers / impact"
+    },
+    {
+      "kind": "File discovery with glob",
+      "tokens": 400000,
+      "turns": 188,
+      "instead": "files / search"
+    }
+  ]
+}

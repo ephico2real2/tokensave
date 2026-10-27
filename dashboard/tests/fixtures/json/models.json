@@ -1,0 +1,51 @@
+{
+  "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "rows": [
+    {
+      "model": "claude-opus-5-5",
+      "costUsd": [
+        null,
+        2,
+        54,
+        128,
+        null
+      ]
+    },
+    {
+      "model": "claude-fable-5-1",
+      "costUsd": [
+        null,
+        null,
+        18,
+        92,
+        null
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "costUsd": [
+        1,
+        9,
+        4,
+        null,
+        null
+      ]
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "costUsd": [
+        null,
+        3,
+        6,
+        null,
+        null
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "workspace": {
+    "path": "~/gitRepos",
+    "marker": ".tokensave-workspace.toml",
+    "scanDepth": 1
+  },
+  "repos": [
+    {
+      "name": "inkcast",
+      "path": "~/gitRepos/inkcast",
+      "indexed": true,
+      "spentTokens": 41300000,
+      "savedTokens": 6200000,
+      "tools": [
+        "Claude Code"
+      ],
+      "lastActivity": "2026-10-26T11:58:00.000Z"
+    },
+    {
+      "name": "service-a",
+      "path": "~/gitRepos/service-a",
+      "indexed": true,
+      "spentTokens": 3100000,
+      "savedTokens": 400000,
+      "tools": [
+        "Claude Code",
+        "Codex"
+      ],
+      "lastActivity": "2026-10-25T12:00:00.000Z"
+    },
+    {
+      "name": "secrets-demo",
+      "path": "~/gitRepos/secrets-demo",
+      "indexed": true,
+      "spentTokens": 1900000,
+      "savedTokens": 200000,
+      "tools": [
+        "Codex"
+      ],
+      "lastActivity": "2026-10-22T12:00:00.000Z"
+    },
+    {
+      "name": "docs-site",
+      "path": "~/gitRepos/docs-site",
+      "indexed": true,
+      "spentTokens": 800000,
+      "savedTokens": 100000,
+      "tools": [
+        "Claude Code"
+      ],
+      "lastActivity": "2026-10-19T12:00:00.000Z"
+    },
+    {
+      "name": "infra-lab",
+      "path": "~/gitRepos/infra-lab",
+      "indexed": false,
+      "spentTokens": 1500000,
+      "savedTokens": null,
+      "tools": [
+        "Cursor"
+      ],
+      "lastActivity": "2026-10-23T12:00:00.000Z"
+    },
+    {
+      "name": "data-lab",
+      "path": "~/gitRepos/data-lab",
+      "indexed": false,
+      "spentTokens": null,
+      "savedTokens": null,
+      "tools": [],
+      "lastActivity": null
+    }
+  ]
+}

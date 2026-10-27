@@ -1,0 +1,31 @@
+{
+  "roles": [
+    {
+      "role": "reviewer",
+      "costUsd": 128.4,
+      "share": 0.41
+    },
+    {
+      "role": "builder",
+      "costUsd": 109.6,
+      "share": 0.35
+    },
+    {
+      "role": "main",
+      "costUsd": 62.5,
+      "share": 0.2
+    },
+    {
+      "role": "Explore",
+      "costUsd": 9.3,
+      "share": 0.03
+    },
+    {
+      "role": "other",
+      "costUsd": 2.6,
+      "share": 0.01
+    }
+  ],
+  "subagentShare": 0.78,
+  "unfinishedRuns": 4
+}

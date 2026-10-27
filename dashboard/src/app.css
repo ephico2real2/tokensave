@@ -1,0 +1,1073 @@
+/*
+ * Layout and type of the dashboard, translated from the mockup's inline styles
+ * (inkcast docs/tooling/tokensave-dashboard/mockups/source/Main.dc.html). Colours come only
+ * from tokens.css. Breakpoints are the mockup's: phone up to 640 px, content at most 1440 px.
+ */
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.ts-app {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  min-height: 100vh;
+  width: 100%;
+}
+
+.ts-mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.ts-sans {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+.ts-muted {
+  color: var(--muted);
+}
+
+.ts-text {
+  color: var(--text);
+}
+
+.ts-warn {
+  color: var(--warn-fg);
+}
+
+/* Text for screen readers only. */
+.ts-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- app-header ---------- */
+
+.ts-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.ts-header__inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 14px max(24px, env(safe-area-inset-right)) 0 max(24px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ts-header__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.ts-brand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ts-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--logo-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ts-logo svg {
+  stroke: var(--logo-fg);
+}
+
+.ts-brand__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-brand__name {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.ts-brand__sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-brand__sub--error {
+  color: var(--stop-fg);
+}
+
+.ts-header__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-field {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ts-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  padding: 6px 8px;
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  background: var(--bg);
+  min-height: 36px;
+}
+
+.ts-select--filter {
+  padding: 5px 8px;
+  min-height: 34px;
+}
+
+.ts-filterbtn {
+  display: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+.ts-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ts-rangebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-rangebar__label,
+.ts-rangebar__text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-date {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  padding: 5px 8px;
+  min-height: 36px;
+}
+
+.ts-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.ts-tabs button {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 14px;
+  white-space: nowrap;
+  min-height: 44px;
+}
+
+.ts-tabs button[aria-current='page'] {
+  font-weight: 600;
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.ts-tabs button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---------- segmented ---------- */
+
+.ts-seg {
+  display: flex;
+  border: 1px solid var(--control);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ts-seg--separated {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.ts-seg button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  min-height: 36px;
+}
+
+.ts-seg--separated button {
+  white-space: nowrap;
+}
+
+.ts-seg--separated button + button {
+  border-left: 1px solid var(--control);
+}
+
+.ts-seg button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.ts-seg button:focus-visible {
+  outline-offset: -3px;
+  outline-color: var(--text);
+}
+
+/* ---------- main and cards ---------- */
+
+.ts-main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px max(24px, env(safe-area-inset-right)) 40px max(24px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ts-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ts-card--chart {
+  gap: 12px;
+}
+
+.ts-card--table {
+  gap: 0;
+}
+
+.ts-card--table > .ts-h2 {
+  margin-bottom: 6px;
+}
+
+.ts-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ts-h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ts-h2--large {
+  font-size: 18px;
+}
+
+.ts-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ts-grid--280 {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.ts-grid--300 {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.ts-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.ts-split__main {
+  flex: 999 1 560px;
+}
+
+.ts-split > aside {
+  flex: 1 1 280px;
+}
+
+/* A box that scrolls sideways inside its card; it takes focus so it can scroll by keyboard. */
+.ts-scroll {
+  overflow-x: auto;
+}
+
+/* ---------- section states ---------- */
+
+.ts-state {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ts-state--error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--stop-fg);
+}
+
+.ts-retry {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  padding: 6px 12px;
+  min-height: 36px;
+}
+
+.ts-retry--inline {
+  font-size: 12px;
+  padding: 0 8px;
+  min-height: 24px;
+}
+
+/* ---------- kpi-tiles ---------- */
+
+.ts-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.ts-tiles--wide {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.ts-tile-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ts-tile-card--state {
+  grid-column: 1 / -1;
+}
+
+.ts-tile-card__label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* At least 24 px, so the number is large text (WCAG): the light theme's saved colour meets
+   3:1 but not 4.5:1, and the mockup's 22 px floor would need 4.5:1 below 1000 px. */
+.ts-tile-card__value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: clamp(24px, 2.4vw, 28px);
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ---------- time-series ---------- */
+
+.ts-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-chart-head__title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ts-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ts-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ts-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+/* The chart's Table button: as tall as the heading beside it (36 px), so it adds no height. */
+.ts-toggle {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--control);
+  border-radius: 8px;
+  padding: 6px 12px;
+  min-height: 34px;
+}
+
+.ts-toggle[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.ts-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 200px;
+  border-bottom: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.ts-plot__day {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 100%;
+}
+
+.ts-plot__bar {
+  flex: 1 1 0;
+  border-radius: 3px 3px 0 0;
+}
+
+.ts-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 6px;
+}
+
+.ts-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ts-table th,
+.ts-table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 400;
+}
+
+.ts-table th:first-child {
+  text-align: left;
+  font-family: inherit;
+}
+
+.ts-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--muted);
+  border-top: 0;
+  font-family: inherit;
+}
+
+/* ---------- bar-list ---------- */
+
+.ts-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ts-bar__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ts-bar__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-bar__value {
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ts-bar__track {
+  height: 8px;
+  background: var(--track);
+  border-radius: 4px;
+}
+
+.ts-bar__fill {
+  height: 8px;
+  border-radius: 4px;
+}
+
+.ts-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.ts-dot--large {
+  width: 12px;
+  height: 12px;
+}
+
+.ts-dot--small {
+  width: 8px;
+  height: 8px;
+}
+
+.ts-square {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ts-stats {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ts-stats__row {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---------- row-list ---------- */
+
+.ts-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.ts-line--run {
+  gap: 8px 14px;
+}
+
+.ts-line--child {
+  padding-left: 24px;
+}
+
+.ts-who {
+  flex: 2 1 200px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-who--wide {
+  flex-basis: 220px;
+}
+
+.ts-icon-tile {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.ts-icon-tile--large {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.ts-who__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-who__name {
+  font-weight: 500;
+}
+
+.ts-who__name--top {
+  font-weight: 600;
+}
+
+.ts-who__name--child {
+  font-weight: 400;
+}
+
+.ts-who__sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-line__figures {
+  flex: 1 1 320px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.ts-line__figures--run {
+  flex-basis: 380px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.ts-line__pair {
+  display: flex;
+  gap: 16px;
+}
+
+.ts-line__pair--state {
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-line__cost {
+  font-weight: 500;
+  min-width: 64px;
+  text-align: right;
+}
+
+.ts-line__cost--run {
+  min-width: 56px;
+}
+
+.ts-badge {
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.ts-badge--none {
+  background: var(--raised);
+  color: var(--muted);
+}
+
+.ts-badge--ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.ts-badge--warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.ts-badge--info {
+  background: var(--info-bg);
+  color: var(--info-fg);
+}
+
+.ts-badge--stop {
+  background: var(--stop-bg);
+  color: var(--stop-fg);
+}
+
+.ts-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.ts-box--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ts-box__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.ts-repo__name {
+  flex: 2 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-repo__status {
+  flex: 0 0 auto;
+}
+
+.ts-repo__tokens {
+  flex: 1 1 150px;
+  display: flex;
+  gap: 12px;
+}
+
+.ts-repo__figure {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ts-repo__tools {
+  flex: 1 1 150px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ts-repo__tool {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ts-repo__last {
+  flex: 0 1 90px;
+  color: var(--muted);
+  text-align: right;
+}
+
+/* ---------- heat-grid ---------- */
+
+.ts-heat {
+  display: grid;
+  gap: 6px;
+  min-width: 660px;
+  font-size: 13px;
+}
+
+/* Rows exist for assistive technology only; their cells sit straight in the grid. */
+.ts-heat__row {
+  display: contents;
+}
+
+.ts-heat__corner,
+.ts-heat__col {
+  color: var(--muted);
+  padding: 8px 4px;
+  font-weight: 400;
+}
+
+.ts-heat__col {
+  text-align: center;
+}
+
+.ts-heat__corner,
+.ts-heat__model {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+}
+
+.ts-heat__model {
+  padding: 12px 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-heat__cell {
+  font-family: 'IBM Plex Mono', monospace;
+  text-align: center;
+  padding: 12px 4px;
+  border-radius: 6px;
+}
+
+.ts-heat__cell--none {
+  background: var(--heat-none-bg);
+  color: var(--heat-none-fg);
+}
+
+.ts-heat__cell--0 {
+  background: var(--heat-0-bg);
+  color: var(--heat-0-fg);
+}
+
+.ts-heat__cell--1 {
+  background: var(--heat-1-bg);
+  color: var(--heat-1-fg);
+}
+
+.ts-heat__cell--2 {
+  background: var(--heat-2-bg);
+  color: var(--heat-2-fg);
+}
+
+.ts-heat__cell--3 {
+  background: var(--heat-3-bg);
+  color: var(--heat-3-fg);
+}
+
+/* ---------- stat-strip ---------- */
+
+.ts-strip {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ts-strip__main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ts-strip__value {
+  font-size: 18px;
+}
+
+.ts-strip__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.ts-strip__stat {
+  font-size: 22px;
+}
+
+.ts-figure {
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-figure__label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- callout ---------- */
+
+.ts-callout {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ts-callout__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--warn-fg);
+}
+
+.ts-callout__code {
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  overflow-x: auto;
+  /* A command must read (and copy) as one line: it scrolls instead of breaking at a hyphen. */
+  white-space: pre;
+}
+
+/* ---------- card-grid ---------- */
+
+.ts-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ts-intro__text {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ts-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.ts-source__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-source__name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ts-source__path {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.ts-figures {
+  display: flex;
+  gap: 24px;
+  font-size: 13px;
+}
+
+/* ---------- phone ---------- */
+
+@media (max-width: 640px) {
+  .ts-filterbtn {
+    display: flex;
+  }
+
+  .ts-filters {
+    display: none;
+  }
+
+  /* The Filters sheet: the same selects, stacked in a panel under its button. */
+  .ts-filters.is-open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .ts-filters.is-open .ts-field {
+    justify-content: space-between;
+  }
+
+  .ts-filters.is-open .ts-select {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto;
+    transition: none;
+    animation: none;
+  }
+}
