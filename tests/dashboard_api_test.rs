@@ -306,10 +306,12 @@ async fn fixture() -> Fixture {
     let home = root.join("home");
     let data = home.join(".tokensave");
     let db_path = data.join("global.db");
+    // Keyed as tokensave keys a project: on Windows `canonicalize` gives a
+    // verbatim `\\?\C:\...` path, which tokensave stores without the prefix.
     let repo = |name: &str| {
         let path = root.join("repos").join(name);
         std::fs::create_dir_all(&path).unwrap();
-        path.to_string_lossy().into_owned()
+        tokensave::global_db::normalize_project_key(&path)
     };
     let (alpha, beta, gamma) = (repo("alpha"), repo("beta"), repo("gamma"));
     std::fs::create_dir_all(Path::new(&alpha).join(".tokensave")).unwrap();
