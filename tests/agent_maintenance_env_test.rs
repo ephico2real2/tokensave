@@ -38,6 +38,7 @@ fn rules_file_rewritten(skip_maintenance: bool) -> bool {
         .arg("status")
         .current_dir(project.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .env("APPDATA", home.path())
         .env("LOCALAPPDATA", home.path())

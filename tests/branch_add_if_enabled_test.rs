@@ -42,6 +42,7 @@ fn tokensave(root: &Path, args: &[&str]) -> std::process::Output {
         // Never let the developer's own global hooks or config leak in.
         .env("GIT_CONFIG_COUNT", "0")
         .env("HOME", root)
+        .env("TOKENSAVE_HOME", root.join(".tokensave"))
         .output()
         .expect("run tokensave")
 }
@@ -187,6 +188,7 @@ fn if_enabled_honours_the_env_override() {
         .current_dir(root)
         .env("GIT_CONFIG_COUNT", "0")
         .env("HOME", root)
+        .env("TOKENSAVE_HOME", root.join(".tokensave"))
         .env("TOKENSAVE_AUTO_TRACK", "1")
         .output()
         .expect("run tokensave");

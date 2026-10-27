@@ -34,6 +34,18 @@ whatever you last installed, and that is the signal the silent agent resync
 watches for. Unset it only if you are deliberately exercising that path, and
 not against your real home directory.
 
+It also sets `TOKENSAVE_HOME` to `target/test-tokensave-home`, so the test
+suite keeps `global.db`, `config.toml`, the pricing cache and the rest of
+tokensave's data there instead of in your `~/.tokensave`. Tests run MCP servers
+in-process, and before this every tool call they made was recorded in your real
+savings ledger. A test cannot change the variable itself (`set_var` is unsound
+while other test threads run), which is why it is set from outside the process;
+`tests/data_home_guard_test.rs` fails if it is missing, for example when cargo
+runs from another directory and does not read `.cargo/config.toml`. A test that
+starts a child process with its own `HOME` removes `TOKENSAVE_HOME` from that
+child. `cargo run` uses the sandbox too; `TOKENSAVE_HOME=~/.tokensave cargo run`
+works on your real data.
+
 ## Project Structure
 
 ```

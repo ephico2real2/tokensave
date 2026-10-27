@@ -263,7 +263,7 @@ pub(crate) async fn handle_wipe(all: bool) -> tokensave::errors::Result<()> {
     use std::fs;
     use std::path::PathBuf;
 
-    let home_tokensave: Option<PathBuf> = dirs::home_dir().map(|h| h.join(".tokensave"));
+    let home_tokensave: Option<PathBuf> = tokensave::data_home::tokensave_home(dirs::home_dir());
 
     let mut targets = global::gather_target_projects(all, &home_tokensave).await;
     if all {
@@ -353,7 +353,7 @@ pub(crate) async fn handle_list(all: bool) -> tokensave::errors::Result<()> {
     use std::path::PathBuf;
     use tokensave::display::format_token_count;
 
-    let home_tokensave: Option<PathBuf> = dirs::home_dir().map(|h| h.join(".tokensave"));
+    let home_tokensave: Option<PathBuf> = tokensave::data_home::tokensave_home(dirs::home_dir());
     let project_paths = global::gather_target_projects(all, &home_tokensave).await;
 
     if project_paths.is_empty() {

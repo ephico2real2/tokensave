@@ -38,6 +38,7 @@ impl Machine {
         command
             .args(args)
             .env("HOME", self.home.path())
+            .env("TOKENSAVE_HOME", self.home.path().join(".tokensave"))
             .env("USERPROFILE", self.home.path())
             .env_remove("TOKENSAVE_CPU_USAGE")
             .stdin(Stdio::null());
@@ -286,6 +287,7 @@ fn init_falls_back_to_the_default_when_the_result_cannot_be_saved() {
         .arg("init")
         .arg(dir.path())
         .env("HOME", &home_file)
+        .env("TOKENSAVE_HOME", home_file.join(".tokensave"))
         .env("USERPROFILE", &home_file)
         .env_remove("TOKENSAVE_CPU_USAGE")
         .stdin(Stdio::null())

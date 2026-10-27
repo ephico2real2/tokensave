@@ -35,6 +35,7 @@ fn a_local_install_that_cannot_write_exits_non_zero() {
         .args(["githooks", "on", "--local"])
         .current_dir(repo.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .output()
         .expect("run tokensave githooks on --local");
@@ -60,6 +61,7 @@ fn a_global_install_that_cannot_write_exits_non_zero() {
         .args(["githooks", "on"])
         .current_dir(cwd.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .env_remove("XDG_CONFIG_HOME")
         .output()

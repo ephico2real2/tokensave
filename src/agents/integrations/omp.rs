@@ -152,7 +152,7 @@ fn omp_paths(ctx: &InstallContext) -> Result<(PathBuf, PathBuf)> {
 
 impl LockedOmpProfileRegistry {
     fn load(home: &Path) -> Result<Self> {
-        let state_dir = home.join(".tokensave");
+        let state_dir = crate::data_home::tokensave_home_for(home);
         std::fs::create_dir_all(&state_dir).map_err(|error| {
             omp_registry_error(format!("could not create {}: {error}", state_dir.display()))
         })?;
@@ -220,7 +220,9 @@ fn omp_registry_error(message: impl Into<String>) -> TokenSaveError {
 }
 
 fn load_omp_profile_registry(home: &Path) -> Result<OmpProfileRegistry> {
-    load_omp_profile_registry_from(&home.join(".tokensave").join(OMP_PROFILE_REGISTRY_FILE))
+    load_omp_profile_registry_from(
+        &crate::data_home::tokensave_home_for(home).join(OMP_PROFILE_REGISTRY_FILE),
+    )
 }
 
 fn load_omp_profile_registry_from(path: &Path) -> Result<OmpProfileRegistry> {

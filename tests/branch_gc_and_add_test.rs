@@ -38,6 +38,7 @@ fn tokensave(root: &Path, args: &[&str]) -> std::process::Output {
         .current_dir(root)
         .env("GIT_CONFIG_COUNT", "0")
         .env("HOME", root)
+        .env("TOKENSAVE_HOME", root.join(".tokensave"))
         .output()
         .expect("run tokensave")
 }

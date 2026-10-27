@@ -63,8 +63,8 @@ pub fn rules_management_enabled() -> bool {
 /// known-folder API, not `HOME`/`USERPROFILE`), and a setting read from one
 /// home must not decide about a file in another (the split behind #575).
 fn manage_rules_setting() -> bool {
-    let from_agent_home = crate::agents::home_dir()
-        .map(|home| home.join(".tokensave").join("config.toml"))
+    let from_agent_home = crate::data_home::tokensave_home(crate::agents::home_dir())
+        .map(|dir| dir.join("config.toml"))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|contents| contents.parse::<toml::Table>().ok())
         .and_then(|table| table.get("manage_rules").and_then(toml::Value::as_bool));

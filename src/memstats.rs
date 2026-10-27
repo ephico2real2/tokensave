@@ -90,7 +90,7 @@ const MMAP_FILENAME: &str = "memory.mmap";
 
 /// Resolve the global `~/.tokensave/` directory.
 fn global_tokensave_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".tokensave"))
+    crate::data_home::tokensave_home(dirs::home_dir())
 }
 
 fn now_secs() -> u64 {

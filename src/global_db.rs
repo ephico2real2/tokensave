@@ -71,7 +71,7 @@ pub struct GlobalDb {
 
 /// Returns the path to the global database: `~/.tokensave/global.db`.
 pub fn global_db_path() -> Option<PathBuf> {
-    crate::agents::home_dir().map(|h| h.join(".tokensave").join("global.db"))
+    crate::data_home::tokensave_home(crate::agents::home_dir()).map(|d| d.join("global.db"))
 }
 
 /// Resolves a project directory to the canonical string used as its global-DB key.

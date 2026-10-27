@@ -17,6 +17,7 @@ fn tokensave_in(home: &Path, args: &[&str], dir: &Path) -> Output {
         .args(args)
         .arg(dir)
         .env("HOME", home)
+        .env("TOKENSAVE_HOME", home.join(".tokensave"))
         .env("USERPROFILE", home)
         .env_remove("TOKENSAVE_CPU_USAGE")
         .stdin(Stdio::null())

@@ -254,6 +254,7 @@ async fn environment_override_can_enable_and_disable_automatic_gc() {
             .args(["status", "--json"])
             .current_dir(root)
             .env("HOME", root)
+            .env("TOKENSAVE_HOME", root.join(".tokensave"))
             .env("USERPROFILE", root)
             .env("TOKENSAVE_AUTO_GC", value)
             .output()
@@ -334,6 +335,7 @@ async fn gc_preserves_databases_registered_to_a_live_server() {
             ])
             .env("TOKENSAVE_TEST_GC_SERVER_CHILD", "1")
             .env("HOME", home.path())
+            .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
             .env("USERPROFILE", home.path())
             .output()
             .unwrap();

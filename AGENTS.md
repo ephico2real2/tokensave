@@ -164,7 +164,8 @@ Pipeline: source files → tree-sitter parse → language extractors → nodes/e
 ## Setup and environment
 
 - Rust 1.98.1 pinned via `rust-toolchain.toml`.
-- `.cargo/config.toml` sets `CFLAGS`/`CXXFLAGS=-DNDEBUG` (disable C/C++ assertions in vendored grammars), isolates `core.hooksPath` for tests that create real git repos, and reserves an 8 MB main-thread stack on Windows MSVC.
+- `.cargo/config.toml` sets `CFLAGS`/`CXXFLAGS=-DNDEBUG` (disable C/C++ assertions in vendored grammars), isolates `core.hooksPath` for tests that create real git repos, points `TOKENSAVE_HOME` at `target/test-tokensave-home` so tests never write the developer's `~/.tokensave` (guarded by `tests/data_home_guard_test.rs`; a test giving a child its own `HOME` removes `TOKENSAVE_HOME` on that child), and reserves an 8 MB main-thread stack on Windows MSVC.
+- `TOKENSAVE_HOME` — relocates tokensave's user-level data folder (default `~/.tokensave`), resolved only in `src/data_home.rs`; every user-level path goes through it.
 - Env-var policy: tokensave-owned variables must start with `TOKENSAVE_`; enforced by `tests/env_var_namespace_test.rs`. External (OS/Cargo/git/agent) vars need an explicit allowlist rationale. Never print env-var values (some carry auth material).
 - `TOKENSAVE_WORKER_TOKEN` — auth for the hidden `extract-worker` subcommand (256-bit token, also required as first 32 bytes on stdin). Direct invocation fails. `TOKENSAVE_DISABLE_SUBPROCESS=1` opts out of the worker pool.
 - `TOKENSAVE_DISABLE_GREP_HOOK=1` — opt out of the Claude PreToolUse grep guardrail (useful for headless/subagent dispatch).

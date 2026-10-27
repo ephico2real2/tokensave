@@ -59,6 +59,7 @@ fn a_server_that_has_served_a_request_still_exits_on_sigterm() {
         .args(["init"])
         .current_dir(project.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .output()
         .expect("tokensave init");
@@ -75,6 +76,7 @@ fn a_server_that_has_served_a_request_still_exits_on_sigterm() {
         .arg(project.path())
         .current_dir(project.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

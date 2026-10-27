@@ -78,7 +78,7 @@ impl AgentIntegration for ClaudeIntegration {
 /// config file so tests with temp homes stay hermetic; an absent or
 /// unreadable config means hooks on (the default).
 fn claude_hooks_disabled(home: &Path) -> bool {
-    std::fs::read_to_string(home.join(".tokensave").join("config.toml"))
+    std::fs::read_to_string(crate::data_home::tokensave_home_for(home).join("config.toml"))
         .ok()
         .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         .is_some_and(|v| v.get("claude_hooks").and_then(toml::Value::as_bool) == Some(false))

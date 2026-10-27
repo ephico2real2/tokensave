@@ -22,6 +22,7 @@ use tempfile::TempDir;
 fn with_home<'a>(command: &'a mut Command, home: &Path) -> &'a mut Command {
     command
         .env("HOME", home)
+        .env("TOKENSAVE_HOME", home.join(".tokensave"))
         .env("USERPROFILE", home)
         .env("APPDATA", home)
         .env("LOCALAPPDATA", home)
