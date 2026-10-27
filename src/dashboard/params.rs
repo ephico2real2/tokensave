@@ -340,6 +340,13 @@ mod tests {
     // 2026-10-27
     const TODAY: i64 = 20_753;
 
+    /// A repo path that is absolute on this platform, percent-encoded as the
+    /// page sends it, and its project bucket.
+    #[cfg(not(windows))]
+    const REPO: (&str, &str) = ("%2Fw%2Finkcast.app", "-w-inkcast-app");
+    #[cfg(windows)]
+    const REPO: (&str, &str) = ("C%3A%5Cw%5Cinkcast.app", "C--w-inkcast-app");
+
     fn ok(query: &str) -> Params {
         parse(Some(query), ALL, TODAY, 30).unwrap()
     }
@@ -393,14 +400,15 @@ mod tests {
 
     #[test]
     fn filters_are_checked_and_mapped() {
-        let params = ok(
-            "tool=Claude+Code&effort=xhigh&model=claude-opus-5-5&repo=%2Fw%2Finkcast.app&limit=5",
-        );
+        let params = ok(&format!(
+            "tool=Claude+Code&effort=xhigh&model=claude-opus-5-5&repo={}&limit=5",
+            REPO.0
+        ));
         assert_eq!(params.agent, Some("claude"));
         assert_eq!(params.effort, Some("xhigh"));
         assert_eq!(params.model.as_deref(), Some("claude-opus-5-5"));
         assert_eq!(params.limit, Some(5));
-        assert_eq!(params.repo.unwrap().project_hash, "-w-inkcast-app");
+        assert_eq!(params.repo.unwrap().project_hash, REPO.1);
         assert_eq!(err("tool=claude"), "tool");
         assert_eq!(err("effort=minimal"), "effort");
         assert_eq!(err("limit=0"), "limit");
@@ -433,7 +441,7 @@ mod tests {
 
     #[test]
     fn values_bind_in_the_documented_order() {
-        let params = ok("range=7&tool=Codex&repo=/w/r");
+        let params = ok(&format!("range=7&tool=Codex&repo={}", REPO.0));
         let values = params.values(7);
         assert_eq!(values.len(), 7);
         assert_eq!(values[0], Value::Integer((TODAY - 6) * DAY));
