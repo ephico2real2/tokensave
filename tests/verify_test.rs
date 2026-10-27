@@ -196,6 +196,7 @@ async fn cli_json_exit_codes_and_startup_are_read_only() {
             .arg(dir.path())
             .args(args)
             .env("HOME", home.path())
+            .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
             .output()
             .unwrap()
     };

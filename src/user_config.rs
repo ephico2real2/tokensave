@@ -756,7 +756,7 @@ fn tokensave_dir() -> Option<PathBuf> {
             return Some(dir);
         }
     }
-    dirs::home_dir().map(|h| h.join(".tokensave"))
+    crate::data_home::tokensave_home(dirs::home_dir())
 }
 
 /// Returns the path to the config file: `~/.tokensave/config.toml`.

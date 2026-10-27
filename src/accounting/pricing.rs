@@ -34,7 +34,7 @@ pub struct ModelPricing {
 
 /// Path to the cached pricing file: `~/.tokensave/pricing.json`.
 fn cache_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".tokensave").join("pricing.json"))
+    crate::data_home::tokensave_home(dirs::home_dir()).map(|d| d.join("pricing.json"))
 }
 
 /// The embedded pricing table -- compiled into the binary as a fallback.

@@ -7,6 +7,7 @@ fn tokensave_command(home: &TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tokensave"));
     command
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("TOKENSAVE_SKIP_UPDATE_CHECK", "1");
     command
 }

@@ -1300,6 +1300,13 @@ override matching config values when set. This is especially relevant for
 `TOKENSAVE_AUTO_TRACK`, `TOKENSAVE_REPORT_SAVINGS`, and
 `TOKENSAVE_UPDATE_CHECK`.
 
+`TOKENSAVE_HOME` moves tokensave's own data folder, `~/.tokensave` by default,
+the way `CARGO_HOME` moves `~/.cargo`. Set it to a folder and `global.db`,
+`config.toml`, `state.toml`, `pricing.json`, `benchmark.toml`, the memory and
+monitor files and the server registry are all kept directly in that folder. A
+relative value is taken from the current directory. Unset or empty, nothing
+changes. Each project's own `.tokensave/` folder stays in the project.
+
 ### RAM usage profiles
 
 Add `"memory_usage": "balanced"` to your existing `.tokensave/config.json`.

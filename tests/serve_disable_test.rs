@@ -21,6 +21,7 @@ fn run_server(
         .arg(project.path())
         .current_dir(project.path())
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .env("APPDATA", home.path())
         .env("LOCALAPPDATA", home.path())

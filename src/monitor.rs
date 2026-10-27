@@ -44,7 +44,7 @@ const LOCK_FILENAME: &str = "monitor.lock";
 /// ignores both variables, which split the two whenever `HOME` or
 /// `USERPROFILE` pointed elsewhere.
 fn global_tokensave_dir() -> Option<PathBuf> {
-    crate::agents::home_dir().map(|h| h.join(".tokensave"))
+    crate::data_home::tokensave_home(crate::agents::home_dir())
 }
 
 /// A single ring-buffer entry read from the mmap.

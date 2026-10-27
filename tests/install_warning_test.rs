@@ -18,6 +18,7 @@ fn global_install_warns_when_binary_is_under_cargo_target() {
     let output = Command::new(&binary)
         .args(["install", "--agent", "claude", "--git-hook", "no"])
         .env("HOME", home.path())
+        .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
         .env("USERPROFILE", home.path())
         .env_remove("XDG_CONFIG_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")

@@ -50,6 +50,7 @@ impl Fixture {
             .args(args)
             .current_dir(cwd)
             .env("HOME", self.home.path())
+            .env("TOKENSAVE_HOME", self.home.path().join(".tokensave"))
             .env("USERPROFILE", self.home.path())
             .env("APPDATA", self.home.path())
             .env("LOCALAPPDATA", self.home.path())

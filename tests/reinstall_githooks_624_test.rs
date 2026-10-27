@@ -58,6 +58,7 @@ fn current_bin() -> String {
 fn with_home(command: &mut Command, home: &Path) {
     command
         .env("HOME", home)
+        .env("TOKENSAVE_HOME", home.join(".tokensave"))
         .env("USERPROFILE", home)
         .env("APPDATA", home)
         .env("LOCALAPPDATA", home)

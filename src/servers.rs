@@ -81,7 +81,7 @@ pub struct ServerEntry {
 
 /// `~/.tokensave/servers/`.
 fn registry_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".tokensave").join("servers"))
+    crate::data_home::tokensave_home(dirs::home_dir()).map(|d| d.join("servers"))
 }
 
 fn entry_path(dir: &Path, pid: u32) -> PathBuf {

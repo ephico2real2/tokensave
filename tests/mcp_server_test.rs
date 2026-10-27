@@ -2118,6 +2118,7 @@ async fn selected_calls_skip_all_accounting_and_preserve_local_schema_charge() {
             ])
             .env("TOKENSAVE_SELECTED_ACCOUNTING_HOME", home.path())
             .env("HOME", home.path())
+            .env("TOKENSAVE_HOME", home.path().join(".tokensave"))
             .env("RUST_TEST_THREADS", "1");
         #[cfg(target_os = "windows")]
         command.env("USERPROFILE", home.path());
