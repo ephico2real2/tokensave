@@ -61,7 +61,7 @@ All best-effort network calls use short timeouts (1-5 seconds) and never block t
 tokensave never writes a credential, API key, token or password. Every external call targets a public, unauthenticated endpoint, except `tokensave cursor sync`, which runs only when you run it:
 
 - With a Cursor Admin API key, from `TOKENSAVE_CURSOR_ADMIN_KEY` or a `cursor-admin-key` file in the data folder that must be readable by its owner only, it sends the key to `api.cursor.com` as Basic authentication.
-- With `--use-login` and no key, it reads the Cursor app's access token from the app's `state.vscdb` (opened read only) and sends it to `cursor.com` as the dashboard's session cookie. The endpoint is undocumented, and Cursor's terms (section 1.5) restrict extracting data from the service.
+- With `--use-login` and no key, it reads the Cursor app's access token from the app's `state.vscdb` (opened read only; when the app's `-wal` file is present, SQLite also updates the shared `-shm` index beside it, as every reader does, and changes neither the database nor its `-wal`) and sends it to `cursor.com` as the dashboard's session cookie. The endpoint is undocumented, and Cursor's terms (section 1.5) restrict extracting data from the service.
 
 The credential is held in memory for the run only. It is never printed, logged, written to `global.db` or put in an error message; an error names the source and the HTTP status. No redirect is followed, so the credential goes to the named host only. The endpoints are fixed in a release build.
 
