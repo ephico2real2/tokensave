@@ -10,7 +10,7 @@
 
 use tempfile::TempDir;
 use tokensave::global_db::GlobalDb;
-use tokensave::types::CostTurn;
+use tokensave::types::{CostTurn, TurnDetail};
 
 async fn open_isolated_db(tmp: &TempDir) -> GlobalDb {
     let db_path = tmp.path().join(".tokensave").join("global.db");
@@ -33,6 +33,7 @@ fn claude_turn(id: &str, input: u64, output: u64) -> CostTurn {
         tool_names: "Read".to_string(),
         agent: "claude".to_string(),
         credits: None,
+        detail: TurnDetail::default(),
     }
 }
 
@@ -52,6 +53,7 @@ fn droid_turn(id: &str, input: u64, output: u64, credits: Option<u64>) -> CostTu
         tool_names: "Read".to_string(),
         agent: "droid".to_string(),
         credits,
+        detail: TurnDetail::default(),
     }
 }
 
@@ -107,6 +109,74 @@ async fn legacy_migration_adds_agent_and_credits() {
     assert_eq!(row.credits, None, "legacy row has NULL credits");
     assert!((row.cost_usd - 0.05).abs() < 1e-9, "cost_usd preserved");
     assert_eq!(row.turns, 1);
+}
+
+/// A 7.16 DB (turns with agent, credits, tool_result_tokens but no detail
+/// columns) gains them on open: its row is kept with an unknown detail, and
+/// a new turn's detail round-trips.
+#[tokio::test]
+async fn legacy_migration_adds_turn_detail_columns() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join(".tokensave").join("global.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    {
+        let db = libsql::Builder::new_local(&db_path).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             CREATE TABLE turns (
+                 message_id TEXT PRIMARY KEY,
+                 project_hash TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 model TEXT NOT NULL,
+                 timestamp INTEGER NOT NULL,
+                 input_tokens INTEGER NOT NULL,
+                 output_tokens INTEGER NOT NULL,
+                 cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                 cost_usd REAL NOT NULL,
+                 category TEXT NOT NULL,
+                 tool_names TEXT NOT NULL DEFAULT '',
+                 agent TEXT NOT NULL DEFAULT 'claude',
+                 credits INTEGER,
+                 tool_result_tokens INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO turns VALUES \
+             ('v716-1','proj','sess','claude-opus-4',1000,100,50,0,0,0.05,'exploration','','claude',NULL,7)",
+            libsql::params![],
+        )
+        .await
+        .unwrap();
+    }
+
+    let db = GlobalDb::open_at(&db_path)
+        .await
+        .expect("a 7.16 database still opens");
+
+    assert_eq!(db.cost_by_agent_since(0).await[0].turns, 1, "row kept");
+    assert_eq!(
+        db.turn_detail("v716-1").await,
+        Some(TurnDetail::default()),
+        "a turn parsed before the columns has an unknown detail"
+    );
+
+    let mut turn = claude_turn("new-1", 10, 20);
+    turn.detail = TurnDetail {
+        effort: Some("max".into()),
+        requested_model: Some("claude-opus-5-5[1m]".into()),
+        thinking_tokens: Some(9),
+        thinking_ms: Some(800),
+        speed: Some("standard".into()),
+        service_tier: Some("standard".into()),
+        git_branch: Some("main".into()),
+        run_id: Some("a1".into()),
+    };
+    assert!(db.insert_turn(&turn).await);
+    assert_eq!(db.turn_detail("new-1").await, Some(turn.detail));
 }
 
 /// cost_by_agent_since groups by agent and returns all AgentCostSummary fields.
