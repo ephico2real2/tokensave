@@ -52,9 +52,9 @@ It changes no file. It prints what it found and the commands to run, in two part
   fork. tokensave's entries (MCP server, hooks, rules) are removed and written again, and the rest of each config
   stays.
 
-`tokensave reinstall` alone isn't enough. It writes the fork's path into hooks, but it keeps an MCP server
-command that still works (upstream #161, `preserve_mcp_command` in `src/agents/mod.rs`), so an MCP entry that
-names Homebrew's binary keeps naming it.
+`tokensave reinstall` alone isn't enough. It keeps an MCP server command that still works (upstream #161,
+`preserve_mcp_command` in `src/agents/mod.rs`), so an MCP entry that names Homebrew's binary keeps naming it, and
+it skips hooks that are already present.
 
 Run the script again afterwards. It says "Nothing to do" for the shell, and "runs the fork" for each agent.
 Agent sessions that were already open keep the build they started with until you restart them. `tokensave servers`
