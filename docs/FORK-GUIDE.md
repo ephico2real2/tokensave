@@ -33,18 +33,23 @@ current folder, not from `--path`. The binary goes to `~/.cargo/bin/tokensave`.
 
 ## 2. Run the fork, not upstream
 
-An upstream tokensave (Homebrew, a release download) can stay installed. Put `~/.cargo/bin` first on your
-`PATH`, in `~/.zshrc` or `~/.bashrc`:
+An upstream tokensave (Homebrew, a release download) can stay installed, and it usually comes first on `PATH`.
+From the checkout, run:
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
+sh scripts/fork-path.sh
 ```
 
-Open a new terminal and check:
+It detects your login shell (zsh, bash or fish) from `$SHELL`, finds its startup file, and prints the commands to
+run: one that appends the `PATH` line to the end of that file (after Homebrew's setup), one that restarts the
+shell, and two checks. It changes no file itself. Run it again afterwards: it says "Nothing to do" once
+`tokensave` is the fork.
+
+The checks it prints:
 
 ```sh
-which tokensave              # ~/.cargo/bin/tokensave
-tokensave dashboard --help   # only the fork has this command
+which tokensave                                            # ~/.cargo/bin/tokensave
+tokensave dashboard --help > /dev/null && echo 'fork: ok'  # only the fork has this command
 ```
 
 `tokensave --version` doesn't tell them apart: the fork reports the version of the upstream release it is
@@ -132,7 +137,9 @@ it, which replaces the fork.
 
 | Message | What to do |
 |---|---|
-| `error: unrecognized subcommand 'dashboard'` (or `'cursor'`) | An upstream build ran. Check `which tokensave` (step 2). |
+| `error: unrecognized subcommand 'dashboard'` (or `'cursor'`) | An upstream build ran. Run `sh scripts/fork-path.sh` (step 2). |
+| `cargo install` warns `be sure to add .../.cargo/bin to your PATH` | The same: step 2. |
+| `cargo install` warns `stripping debug info with rust-objcopy failed` and `Library not loaded: @rpath/libLLVM.dylib` (macOS) | Harmless: the binary is installed, with its symbols left in. The toolchain's `rust-objcopy` looks for `libLLVM.dylib` in `lib/rustlib/<host>/lib`, and the toolchain installs it in `lib/`. |
 | `port 7311 on 127.0.0.1 is in use` | Another program holds the port. Use `--port N`, or `port` in `dashboard.toml`. |
 | The page says "dashboard page not built" | The binary was built without `dashboard/dist/`. Build from a full checkout of the fork. |
 | `Cursor login expired: sign in to the Cursor app again` | Sign in to Cursor, then sync again. |
