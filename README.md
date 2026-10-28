@@ -28,6 +28,8 @@
 
 ---
 
+> **This is the tokensave2 fork.** To build, install and run it beside upstream tokensave, see [docs/FORK-GUIDE.md](docs/FORK-GUIDE.md).
+
 > **Beta available:** Try the new, improved queries on the [beta branch](https://github.com/aovestdipaperino/tokensave/tree/beta), including optimized search ranking, graph analysis, and indexing cleanup. See the [beta changelog](https://github.com/aovestdipaperino/tokensave/blob/beta/CHANGELOG.md) for details.
 >
 > Install from source: `cargo install --git https://github.com/aovestdipaperino/tokensave.git --branch beta --locked --force`
