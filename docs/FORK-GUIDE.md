@@ -50,11 +50,11 @@ It changes no file. It prints what it found and the commands to run, in two part
   binary the configs of Claude Code, Codex, Cursor and Copilot name. For each one still naming another install,
   it prints `uninstall --agent <agent> --keep-git-hooks` and one `install --agent ... --git-hook no`, run with the
   fork. tokensave's entries (MCP server, hooks, rules) are removed and written again, and the rest of each config
-  stays.
+  stays, except comments in VS Code's `mcp.json`: tokensave writes that file back without them.
 
 `tokensave reinstall` alone isn't enough. It keeps an MCP server command that still works (upstream #161,
 `preserve_mcp_command` in `src/agents/mod.rs`), so an MCP entry that names Homebrew's binary keeps naming it, and
-it skips hooks that are already present.
+it skips Claude Code hooks that are already present, whatever binary they name.
 
 Run the script again afterwards. It says "Nothing to do" for the shell, and "runs the fork" for each agent.
 Agent sessions that were already open keep the build they started with until you restart them. `tokensave servers`
@@ -167,11 +167,15 @@ it, which replaces the fork.
 
 ```sh
 cargo uninstall tokensave
+tokensave uninstall --agent claude --keep-git-hooks
+tokensave install --agent claude --git-hook no
 tokensave reinstall
 ```
 
-With the fork gone, `tokensave` is the upstream binary, and `reinstall` points the agents at it: the fork's path no
-longer resolves, so `reinstall` doesn't keep it.
+With the fork gone, `tokensave` is the upstream binary. In bash, run `hash -r` first, or bash runs the removed path.
+`reinstall` points the MCP entries and Cursor's hooks at upstream, because the fork's path no longer resolves. It
+skips Claude Code's hooks, which still name the fork, so the two lines before it write them again. Leave those two
+out if you don't use Claude Code. Then remove the fork's `PATH` line from your shell's startup file.
 
 The database keeps the fork's schema. Upstream hasn't been tested with it, so restore your
 `global.db.before-fork` backup if upstream misbehaves. Turns recorded since the backup are lost when you restore it.

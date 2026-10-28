@@ -45,10 +45,17 @@ case "$shell_name" in
         line="export PATH=\"$shown_bin:\$PATH\""
         ;;
     bash)
-        # Terminal on macOS starts bash as a login shell, which reads
-        # ~/.bash_profile and not ~/.bashrc.
+        # Terminal on macOS starts bash as a login shell, which reads only
+        # the first of ~/.bash_profile, ~/.bash_login and ~/.profile that
+        # exists. Creating ~/.bash_profile would hide the other two.
         if [ "$(uname -s)" = Darwin ]; then
             startup="$HOME/.bash_profile"
+            for file in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+                if [ -f "$file" ]; then
+                    startup="$file"
+                    break
+                fi
+            done
         else
             startup="$HOME/.bashrc"
         fi
@@ -96,7 +103,16 @@ echo
 echo "== Agents"
 agents=""
 if [ -f "$state" ]; then
-    agents=$(sed -n '/^installed_agents *= *\[/,/\]/p' "$state" | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+    # From the `installed_agents =` line to its closing `]`, which tokensave
+    # writes on the same line for zero or one agent.
+    agents=$(awk '
+        /^[[:space:]]*installed_agents[[:space:]]*=/ { found = 1 }
+        found {
+            sub(/#.*/, "")
+            print
+            if (index($0, "]")) exit
+        }
+    ' "$state" | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
 fi
 if [ -z "$agents" ]; then
     echo "No agent is recorded as installed in $state."
@@ -106,13 +122,18 @@ fi
 
 claude_dir="${CLAUDE_CONFIG_DIR:-}"
 claude_dir="${claude_dir%%,*}"
+# The VS Code folders tokensave writes (vscode_data_dir and
+# vscode_insiders_data_dir in src/agents/fs.rs): XDG_CONFIG_HOME is not used.
 if [ "$(uname -s)" = Darwin ]; then
     vscode_user="$HOME/Library/Application Support/Code/User"
+    insiders_user="$HOME/Library/Application Support/Code - Insiders/User"
 else
-    vscode_user="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User"
+    vscode_user="$HOME/.config/Code/User"
+    insiders_user="$HOME/.config/Code - Insiders/User"
 fi
 
 # The config files that hold an agent's MCP command or hooks, one per line.
+# VS Code's settings.json can hold a pre-#266 entry that uninstall removes.
 config_files() {
     case "$1" in
         claude)
@@ -125,7 +146,9 @@ config_files() {
         codex) printf '%s\n' "$HOME/.codex/config.toml" ;;
         cursor) printf '%s\n' "$HOME/.cursor/mcp.json" "$HOME/.cursor/hooks.json" ;;
         copilot)
-            printf '%s\n' "$HOME/.copilot/mcp-config.json" "$vscode_user/mcp.json" \
+            printf '%s\n' "$HOME/.copilot/mcp-config.json" \
+                "$vscode_user/mcp.json" "$vscode_user/settings.json" \
+                "$insiders_user/mcp.json" "$insiders_user/settings.json" \
                 "$HOME/.config/github-copilot/intellij/mcp.json"
             ;;
     esac
@@ -141,25 +164,47 @@ has_config() {
     done | grep -q yes
 }
 
-# Every tokensave executable an agent's configs name, other than the fork.
-other_binaries() {
+# The tokensave programs an agent's configs run, one per line: the value of
+# each JSON "command" key and TOML `command =` that is tokensave, a path
+# ending in /tokensave, or one of those followed by a hook's subcommand.
+# Other mentions (a project path, a permission rule) are not commands.
+tokensave_commands() {
     config_files "$1" | while IFS= read -r file; do
         [ -f "$file" ] || continue
-        grep -o '/[^"'"'"']*/tokensave\b' "$file" 2>/dev/null || true
-    done | sort -u | while IFS= read -r bin; do
-        if [ -f "$bin" ] && [ -x "$bin" ] && [ "$bin" != "$fork" ]; then
-            echo "$bin"
+        grep -oE '"command"[[:space:]]*:[[:space:]]*"[^"]*"|^[[:space:]]*command[[:space:]]*=[[:space:]]*"[^"]*"' \
+            "$file" 2>/dev/null || true
+    done | sed -e 's/^[^:=]*[:=][[:space:]]*"//' -e 's/"$//' |
+        sed -n 's/^\(\(.*\/\)\{0,1\}tokensave\)\( .*\)\{0,1\}$/\1/p' | sort -u
+}
+
+# Each program other than the fork, joined with ", ". A bare `tokensave` runs
+# whatever the agent finds first on its own PATH.
+other_commands() {
+    tokensave_commands "$1" | while IFS= read -r cmd; do
+        if [ "$cmd" = "$fork" ]; then
+            continue
+        elif [ "$cmd" = tokensave ]; then
+            echo "tokensave (looked up on the agent's PATH)"
+        elif [ -f "$cmd" ] && [ -x "$cmd" ]; then
+            echo "$cmd"
+        else
+            echo "$cmd (missing)"
         fi
-    done
+    done | awk 'NR > 1 { printf ", " } { printf "%s", $0 } END { if (NR) print "" }'
 }
 
 to_switch=""
 for agent in $agents; do
     case "$agent" in
         claude | codex | cursor | copilot)
-            others=$(other_binaries "$agent" | tr '\n' ' ' | sed 's/ $//')
             if ! has_config "$agent"; then
                 printf '  %-8s %s\n' "$agent" "no config found"
+                continue
+            fi
+            others=$(other_commands "$agent")
+            if [ -z "$(tokensave_commands "$agent")" ]; then
+                printf '  %-8s %s\n' "$agent" "has no tokensave command in its config"
+                to_switch="$to_switch $agent"
             elif [ -n "$others" ]; then
                 printf '  %-8s %s\n' "$agent" "names $others"
                 to_switch="$to_switch $agent"
