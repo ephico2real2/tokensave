@@ -31,42 +31,48 @@ cargo install --locked --path .
 Run `cargo install` from inside the checkout. rustup picks the toolchain from `rust-toolchain.toml` in the
 current folder, not from `--path`. The binary goes to `~/.cargo/bin/tokensave`.
 
-## 2. Run the fork, not upstream
+## 2. Point your shell and your agents at the fork
 
-An upstream tokensave (Homebrew, a release download) can stay installed, and it usually comes first on `PATH`.
-From the checkout, run:
+An upstream tokensave (Homebrew, a release download) can stay installed. It usually comes first on `PATH`, and the
+agents' configs may still name it. From the checkout, run:
 
 ```sh
 sh scripts/fork-path.sh
 ```
 
-It detects your login shell (zsh, bash or fish) from `$SHELL`, finds its startup file, and prints the commands to
-run: one that appends the `PATH` line to the end of that file (after Homebrew's setup), one that restarts the
-shell, and two checks. It changes no file itself. Run it again afterwards: it says "Nothing to do" once
-`tokensave` is the fork.
+It changes no file. It prints what it found and the commands to run, in two parts.
 
-The checks it prints:
+- **Shell.** It detects your login shell (zsh, bash or fish) from `$SHELL` and finds its startup file. It prints
+  the command that adds the `PATH` line to the end of that file (after Homebrew's setup), the command that
+  restarts the shell, and two checks: `which tokensave` prints `~/.cargo/bin/tokensave`, and
+  `tokensave dashboard --help` succeeds, because only the fork has that command.
+- **Agents.** It reads the agents tokensave recorded as installed (`~/.tokensave/state.toml`) and checks which
+  binary the configs of Claude Code, Codex, Cursor and Copilot name. For each one still naming another install,
+  it prints `uninstall --agent <agent> --keep-git-hooks` and one `install --agent ... --git-hook no`, run with the
+  fork. tokensave's entries (MCP server, hooks, rules) are removed and written again, and the rest of each config
+  stays.
 
-```sh
-which tokensave                                            # ~/.cargo/bin/tokensave
-tokensave dashboard --help > /dev/null && echo 'fork: ok'  # only the fork has this command
-```
+`tokensave reinstall` alone isn't enough. It writes the fork's path into hooks, but it keeps an MCP server
+command that still works (upstream #161, `preserve_mcp_command` in `src/agents/mod.rs`), so an MCP entry that
+names Homebrew's binary keeps naming it.
 
-`tokensave --version` doesn't tell them apart: the fork reports the version of the upstream release it is
+Run the script again afterwards. It says "Nothing to do" for the shell, and "runs the fork" for each agent.
+Agent sessions that were already open keep the build they started with until you restart them. `tokensave servers`
+lists the MCP servers that are running.
+
+`tokensave --version` doesn't tell the two apart: the fork reports the version of the upstream release it is
 based on.
 
-## 3. Point your agents at the fork
+Copy the commands without comments. At a zsh prompt, `#` starts a comment only when `interactivecomments` is
+set, so `cmd  # note` passes `#` and `note` to `cmd` as arguments.
 
-`install` and `reinstall` write the path of the binary that runs them into each agent's settings (hooks and MCP
-server). Run them with the fork:
+## 3. Agents that aren't installed on this machine
 
-```sh
-~/.cargo/bin/tokensave reinstall
-grep -o '"command": *"[^"]*tokensave[^"]*"' ~/.claude/settings.json   # each line names ~/.cargo/bin/tokensave
-```
-
-Agent sessions that were already open keep running the build they started with until you restart them.
-`tokensave servers` lists the MCP servers that are running.
+The agents list can name one whose program isn't installed here, for example `omp` (Oh My Pi) with no `omp`
+command. Then `reinstall` ends with `warning: could not refresh tokensave config for: omp`, because the OMP
+integration asks `omp config path` for its folder. The warning is harmless. You don't need OMP for the fork, the
+dashboard or any other agent. `tokensave uninstall --agent omp` fails the same way, so it can't remove the entry
+yet.
 
 ## 4. First run
 
@@ -75,10 +81,13 @@ upstream builds haven't been tested against a migrated database.
 
 ```sh
 sqlite3 ~/.tokensave/global.db ".backup $HOME/.tokensave/global.db.before-fork"
-tokensave cost                            # migrates, then reads Claude Code, Codex, Pi and Droid sessions
-tokensave accounting backfill --dry-run   # what it would fill in older Claude Code turns
+tokensave cost
+tokensave accounting backfill --dry-run
 tokensave accounting backfill
 ```
+
+`tokensave cost` migrates the database, then reads Claude Code, Codex, Pi and Droid sessions. The backfill's dry
+run counts what it would fill in older Claude Code turns, and writes nothing.
 
 The Claude Code Stop hook records Claude Code turns as you work. Codex, Pi and Droid sessions are read by
 `tokensave cost`, `status` and `monitor`. Run one of them to bring those up to date.
@@ -97,9 +106,11 @@ run it, never from a hook. There are two sources:
   unless you ask for it.
 
 ```sh
-tokensave cursor sync --use-login --dry-run   # fetch and count, write nothing
+tokensave cursor sync --use-login --dry-run
 tokensave cursor sync --use-login
 ```
+
+The dry run fetches and counts, and writes nothing.
 
 The first sync fetches all history. Later ones start an hour before the newest Cursor event recorded. Use
 `--since YYYY-MM-DD` to choose the start. The credential is never printed or stored.
@@ -107,11 +118,14 @@ The first sync fetches all history. Later ones start an hour before the newest C
 ## 6. The dashboard
 
 ```sh
-tokensave dashboard enable    # switch it on in ~/.tokensave/dashboard.toml and start it
-tokensave dashboard open      # open http://127.0.0.1:7311/ in the browser
+tokensave dashboard enable
+tokensave dashboard open
 tokensave dashboard status
 tokensave dashboard stop
 ```
+
+`enable` switches it on in `~/.tokensave/dashboard.toml` and starts it. `open` opens `http://127.0.0.1:7311/` in
+the browser.
 
 It binds `127.0.0.1` only and opens `global.db` read only. It never runs an ingest itself, so its figures are as
 recent as the last `tokensave cost`, `cursor sync` or agent hook. Settings (port, theme, default range) are
@@ -146,13 +160,18 @@ it, which replaces the fork.
 | `the Cursor app's data was not found: install Cursor and sign in` | The Cursor app isn't installed for this user. Install it and sign in. |
 | `the Cursor app is not signed in` | Sign in to the Cursor app, then sync again. |
 | `No Cursor usage source is set up; nothing was fetched.` | Add `--use-login`, or set an Admin API key (step 5). |
+| `warning: could not refresh tokensave config for: omp.` after `reinstall` | Harmless when OMP isn't installed (step 3). |
+| `grep: #: No such file or directory` (or another command given `#` as an argument) | A command was pasted with a `# comment` into zsh. Paste it without the comment (step 2). |
 
 ## Going back to upstream
 
 ```sh
 cargo uninstall tokensave
-tokensave reinstall          # with the upstream binary, so the agents point at it again
+tokensave reinstall
 ```
+
+With the fork gone, `tokensave` is the upstream binary, and `reinstall` points the agents at it: the fork's path no
+longer resolves, so `reinstall` doesn't keep it.
 
 The database keeps the fork's schema. Upstream hasn't been tested with it, so restore your
 `global.db.before-fork` backup if upstream misbehaves. Turns recorded since the backup are lost when you restore it.
